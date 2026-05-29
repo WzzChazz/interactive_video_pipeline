@@ -6,7 +6,7 @@ from loguru import logger
 
 # HuggingFace 官方源和国内镜像源
 HF_MIRROR = "https://hf-mirror.com"
-GH_MIRROR = "https://mirror.ghproxy.com/"
+GH_MIRROR = "https://ghp.ci/"
 
 DOWNLOAD_TASKS = [
     {

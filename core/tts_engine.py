@@ -71,8 +71,9 @@ class DynamicTTSEngine:
         self.theme_config = THEMES.get("hospital_horror", {})
         
     def _map_voice(self, role: str, emotion: str) -> str:
-        CUSTOM_TERRIFIED_VOICE = "longxiaochun" 
-        CUSTOM_ROBOTIC_VOICE = "longxiaochun"   
+        import os
+        CUSTOM_TERRIFIED_VOICE = os.getenv("DASHSCOPE_VOICE_TERRIFIED", "longxiaochun")
+        CUSTOM_ROBOTIC_VOICE = os.getenv("DASHSCOPE_VOICE_ROBOTIC", "longxiaochun")   
         
         is_clone = role and "克隆" in role
         
