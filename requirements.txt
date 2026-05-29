@@ -1,0 +1,42 @@
+# ============================================================
+# Interactive Video Automation Pipeline - Dependencies
+# Python 3.10+
+# ============================================================
+
+# --- LLM / AI APIs ---
+anthropic>=0.25.0          # Claude 3.5 Sonnet
+openai>=1.30.0             # DeepSeek-R1 兼容接口（OpenAI 协议）
+requests>=2.31.0           # 通用 HTTP 请求（Flux, Kling, Runway 等）
+httpx>=0.27.0              # 异步 HTTP（并行资产生成）
+
+# --- 数据验证与序列化 ---
+pydantic>=2.7.0            # LLM JSON 输出强校验
+python-dotenv>=1.0.0       # 从 .env 文件加载密钥
+
+# --- 数据库 ORM ---
+SQLAlchemy>=2.0.30         # ORM + SQLite 持久化
+alembic>=1.13.0            # 数据库版本迁移（预留）
+
+# --- 网页自动化 ---
+DrissionPage>=4.1.0        # 基于 Chromium 的自动化框架（抖音抓取+发布）
+
+# --- 多媒体处理 ---
+Pillow>=10.3.0             # 图片预处理（尺寸/格式校验）
+
+# --- 并发与任务调度 ---
+schedule>=1.2.2            # 轻量定时任务（Daily Task）
+
+# --- 后台监控 Dashboard ---
+fastapi>=0.111.0           # Web API 框架
+uvicorn[standard]>=0.29.0  # ASGI 服务器（支持 WebSocket）
+websockets>=12.0           # WebSocket 支持
+
+# --- 日志与监控 ---
+loguru>=0.7.2              # 结构化日志，支持文件轮转
+
+# --- 工具库 ---
+tenacity>=8.3.0            # API 调用指数退避重试
+tqdm>=4.66.0               # 进度条（批量资产生成）
+python-slugify>=8.0.4      # 文件名安全处理
+PyJWT>=2.8.0
+PyJWT>=2.8.0
