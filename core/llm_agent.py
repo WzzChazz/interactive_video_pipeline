@@ -92,6 +92,10 @@ class SceneShot(BaseModel):
         default="ambient silence",
         description="环境音效 Prompt（英文），如 'heavy rain on rooftop, distant thunder'"
     )
+    is_climax: bool = Field(
+        default=False,
+        description="标记该分镜是否为本集最高潮/最具视觉冲击力的画面（全集唯一，用于生成封面缩略图）"
+    )
 
     @field_validator("visual_prompt", "sfx_prompt", "camera_note", mode="before")
     @classmethod
@@ -425,6 +429,7 @@ def _build_user_prompt(
         "- 10-12 个分镜（scenes），每个分镜 5 秒视频。必须严格保证！",
         "- 剧情要有明显的情感冲突和反转，结尾留悬念。",
         "- next_branches 必须严格区分平台：抖音版必须是“极端理性 vs 圣母底线”的道德困境（引战）；快手版必须是“兄弟情义 vs 生死抉择”的热血困境（煽情）。绝对不能是简单的开门关门！",
+        "- 每集必须有且仅有 1 个分镜的 is_climax 字段设为 true，选择剧情最高潮、最具视觉冲击力的画面（例如：突然揭露真相、激烈对抗、极度惊恐的瞬间），该分镜将被用于生成视频封面缩略图。",
         "- 严格遵守输出格式：纯 JSON，不含任何其他文字。",
     ]
 

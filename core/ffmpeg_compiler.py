@@ -100,9 +100,16 @@ def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Pa
     sub_title = escape_text(f"▶ {sub_title}")
     
     cover_filter = (
-        f"vignette=PI/4,"
+        # 1. 强制压暗 + 去饱和 + 冷蓝色调（不管原图白天还是夜晚，都变成深夜恐怖氛围）
+        f"eq=brightness=-0.35:contrast=1.4:saturation=0.3,"
+        # 2. 叠加一层冷蓝色 tint：给 R 通道减弱，给 B 通道加强
+        f"curves=red='0/0 1/0.7':blue='0/0.1 1/1.0',"
+        # 3. 强力四角暗角，营造窥视感
+        f"vignette=PI/2.5,"
+        # 4. 主标题（白字 + 血红阴影）
         f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{main_title}':"
         f"x=(w-text_w)/2:y=h/2-250:fontsize=130:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
+        # 5. 副标题引导文案（明黄色）
         f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{sub_title}':"
         f"x=(w-text_w)/2:y=h/2-80:fontsize=70:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
     )
@@ -545,9 +552,15 @@ def compile_video(
         sorted_scenes = sorted(scenes, key=lambda s: s["scene_index"])
         
         # [Cold-Open] 寻找倒数第二个高潮片段
+        # [封面] 优先选 LLM 标注的最高潮分镜，若无标注则取最后一幕
         cover_path = out_dir / f"{episode_tag}_cover.jpg"
-        cover_scene_idx = sorted_scenes[-1]["scene_index"] # 取最后/高潮画面作封面
+        climax_scene = next(
+            (s for s in sorted_scenes if s.get("is_climax")),
+            sorted_scenes[-1]  # 兜底：没标注就取最后一幕
+        )
+        cover_scene_idx = climax_scene["scene_index"]
         cover_frame_path = clip_manifest.get(cover_scene_idx, "")
+        logger.info("Cover will use scene {} (is_climax={})", cover_scene_idx, climax_scene.get("is_climax", False))
         if cover_frame_path and Path(cover_frame_path).exists():
             generate_cover(cover_frame_path, banner_text, cover_teaser, cover_path)
         

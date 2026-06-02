@@ -280,14 +280,21 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
         cover_teaser=cover_teaser,
     )
 
-    # 生成封面 (Cover Generation)
+    # 生成封面 (Cover Generation) — 优先使用 LLM 标注的最高潮分镜
     episode_title = script_data.get("episode_title", "互动短剧")
     image_manifest = {int(k): v for k, v in asset_manifest.get("images", {}).items()}
-    # 获取最后一幕的图片作为高能封面
-    climax_scene_idx = max(image_manifest.keys()) if image_manifest else 1
+    # 优先选 is_climax=true 的分镜，否则取序号最大的
+    scenes_list = script_data.get("scenes", [])
+    climax_sc = next((s for s in scenes_list if s.get("is_climax")), None)
+    if climax_sc:
+        climax_scene_idx = climax_sc["scene_index"]
+        logger.info("Cover using climax scene {}", climax_scene_idx)
+    else:
+        climax_scene_idx = max(image_manifest.keys()) if image_manifest else 1
+        logger.info("No is_climax scene found, using last scene {}", climax_scene_idx)
     climax_image_path = image_manifest.get(climax_scene_idx)
     if climax_image_path and Path(climax_image_path).exists():
-        from config.settings import STORAGE_OUTPUT_DIR, VIDEO_WIDTH, VIDEO_HEIGHT
+        from config.settings import STORAGE_OUTPUT_DIR
         out_dir = STORAGE_OUTPUT_DIR / episode.episode_tag
         out_dir.mkdir(parents=True, exist_ok=True)
         cover_path = out_dir / f"{episode.episode_tag}_cover.jpg"
