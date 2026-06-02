@@ -80,7 +80,7 @@ def _get_audio_duration(path: str) -> float:
 # 封面生成 (Cover Generation)
 # ──────────────────────────────────────────────────────────
 
-def generate_cover(image_path: Path, title: str, output_path: Path) -> Path:
+def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Path) -> Path:
     """
     使用 FFmpeg 在首帧图片上叠加高饱和度黄色大字标题，生成爆款封面。
     """
@@ -89,15 +89,27 @@ def generate_cover(image_path: Path, title: str, output_path: Path) -> Path:
     
     safe_title = escape_text(title)
     
-    # 将长标题切分成两行，避免过长超出边界 (简单按中间截断)
-    if len(safe_title) > 8:
-        mid = len(safe_title) // 2
-        title_line1 = safe_title[:mid]
-        title_line2 = safe_title[mid:]
-        
+    main_title = safe_title
+    if "：" in main_title:
+        main_title = main_title.split("：")[-1]
+    main_title = main_title[:10]
+    
+    # 动态副标题，如果为空则默认
+    if not sub_title:
+        sub_title = "点击揭开真相！"
+    sub_title = escape_text(f"▶ {sub_title}")
+    
+    cover_filter = (
+        f"vignette=PI/4,"
+        f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{main_title}':"
+        f"x=(w-text_w)/2:y=h/2-250:fontsize=130:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
+        f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{sub_title}':"
+        f"x=(w-text_w)/2:y=h/2-80:fontsize=70:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
+    )
+    
     _run_ffmpeg([
         "-i", str(image_path),
-        "-vf", f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{safe_title}':x=(w-text_w)/2:y=h/2-150:fontsize=160:fontcolor=red:shadowcolor=black:shadowx=8:shadowy=8",
+        "-vf", cover_filter,
         "-frames:v", "1",
         "-q:v", "2",
         str(output_path)
@@ -205,22 +217,11 @@ def _concat_video_clips(
     """
     使用 FFmpeg concat demuxer 将多段视频拼接为一个无声 MP4，支持动态裁剪（去水）。
     """
-    # Generate a 3.5s black video clip for the endcard
-    black_clip_path = tmp_dir / "black_endcard.mp4"
-    _run_ffmpeg([
-        "-f", "lavfi", "-i", f"color=c=black:s={VIDEO_WIDTH}x{VIDEO_HEIGHT}:r=30",
-        "-t", "3.5", "-c:v", "libx264", "-preset", "fast", "-crf", "18", str(black_clip_path)
-    ], step_name="gen_black_endcard")
-
     concat_list = tmp_dir / "concat_list.txt"
     with open(concat_list, "w") as f:
         for p, dur in zip(clip_paths, scene_durations):
-            # 路径中可能含空格，用单引号包裹
             f.write(f"file '{p}'\n")
             f.write(f"outpoint {dur:.3f}\n")
-        # Append the black endcard
-        f.write(f"file '{black_clip_path}'\n")
-        f.write(f"outpoint 3.500\n")
 
     _run_ffmpeg([
         "-f", "concat",
@@ -229,10 +230,10 @@ def _concat_video_clips(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "18",
-        "-vf", f"crop=iw:ih-140:0:0,"
-               f"eq=brightness=-0.15:contrast=1.2:saturation=0.8,"
+        "-vf", f"eq=brightness=-0.15:contrast=1.2:saturation=0.8,"
                f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
-               f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black",
+               f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+               f"drawbox=x=w-200:y=h-70:w=200:h=70:color=black:t=fill",
         "-an",
         str(output_path),
     ], step_name="concat_clips")
@@ -410,69 +411,31 @@ def _mux_final_video(
     # 倒计时特效 (最后 5 秒)
     countdown_start = max(0, total_duration - 5)
     
-    # A/B 投票选项屏 (最后 5 秒)与平台定制钩子
     ab_text_filter = ""
     hook_filter = ""
+    branch_a = ""
+    branch_b = ""
     
     if next_branches:
-        def escape_text(t):
-            if not t: return ""
-            return str(t).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
-            
         if platform == "douyin":
-            branch_a = escape_text(next_branches.get("douyin_branch_a") or next_branches.get("branch_a_teaser") or "")
-            branch_b = escape_text(next_branches.get("douyin_branch_b") or next_branches.get("branch_b_teaser") or "")
-            prompt_text = escape_text("换作是你，你会怎么选？") 
+            branch_a = next_branches.get("douyin_branch_a") or next_branches.get("branch_a_teaser") or ""
+            branch_b = next_branches.get("douyin_branch_b") or next_branches.get("branch_b_teaser") or ""
         elif platform == "kuaishou":
-            branch_a = escape_text(next_branches.get("kuaishou_branch_a") or next_branches.get("branch_a_teaser") or "")
-            branch_b = escape_text(next_branches.get("kuaishou_branch_b") or next_branches.get("branch_b_teaser") or "")
-            # 快手专属：直白粗暴的情感拷问与引导
-            prompt_text = escape_text("请在评论区留下你的选择：")
+            branch_a = next_branches.get("kuaishou_branch_a") or next_branches.get("branch_a_teaser") or ""
+            branch_b = next_branches.get("kuaishou_branch_b") or next_branches.get("branch_b_teaser") or ""
         else: # global
-            branch_a = escape_text(next_branches.get("english_branch_a_teaser") or "")
-            branch_b = escape_text(next_branches.get("english_branch_b_teaser") or "")
-            prompt_text = escape_text("What would you do? Comment 1 or 2!")
+            branch_a = next_branches.get("english_branch_a_teaser") or ""
+            branch_b = next_branches.get("english_branch_b_teaser") or ""
 
-        # Calculate actual endcard start time. The video has been extended by 3.5s.
-        # So the original total_duration is the start of the endcard.
-        # The new total_duration is total_duration + 3.5
-        countdown_start = total_duration
-        new_total_duration = total_duration + 3.5
-
-        if branch_a and branch_b:
-            ab_text_filter = (
-                f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='1\\: {branch_a}':"
-                f"enable='between(t,{countdown_start},{new_total_duration})':"
-                f"x=(w-text_w)/2:y=h/2+60:fontsize=48:fontcolor=red:shadowcolor=black:shadowx=3:shadowy=3"
-                f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='2\\: {branch_b}':"
-                f"enable='between(t,{countdown_start},{new_total_duration})':"
-                f"x=(w-text_w)/2:y=h/2+140:fontsize=48:fontcolor=cyan:shadowcolor=black:shadowx=3:shadowy=3"
+        # Mid-roll engagement prompt for Kuaishou (keep this!)
+        if platform == "kuaishou":
+            mid_time = max(2, total_duration / 2)
+            mid_end = mid_time + 4
+            ab_text_filter += (
+                f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='如果你是她，你敢进去吗？':"
+                f"enable='between(t,{mid_time},{mid_end})':"
+                f"x=(w-text_w)/2:y=h/2-150:fontsize=64:fontcolor=yellow:shadowcolor=black:shadowx=3:shadowy=3:alpha='if(lt(t,{mid_time}+0.5),(t-{mid_time})/0.5,if(gt(t,{mid_end}-0.5),({mid_end}-t)/0.5,1))'"
             )
-            if prompt_text:
-                ab_text_filter += (
-                    f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{prompt_text}':"
-                    f"enable='between(t,{countdown_start},{new_total_duration})':"
-                    f"x=(w-text_w)/2:y=h/2-220:fontsize=64:fontcolor=yellow:shadowcolor=black:shadowx=3:shadowy=3"
-                )
-            
-            # Mid-roll engagement prompt for Kuaishou
-            if platform == "kuaishou":
-                mid_time = max(2, total_duration / 2)
-                mid_end = mid_time + 4
-                ab_text_filter += (
-                    f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='如果你是她，你敢进去吗？':"
-                    f"enable='between(t,{mid_time},{mid_end})':"
-                    f"x=(w-text_w)/2:y=h/2-150:fontsize=64:fontcolor=yellow:shadowcolor=black:shadowx=3:shadowy=3:alpha='if(lt(t,{mid_time}+0.5),(t-{mid_time})/0.5,if(gt(t,{mid_end}-0.5),({mid_end}-t)/0.5,1))'"
-                )
-            
-            ab_text_filter += hook_filter
-    # 常驻前情提要横幅 (Top Banner)
-    banner_filter = ""
-    if banner_text:
-        def escape_text(t):
-            return str(t).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
-        safe_banner = escape_text(banner_text)
-        banner_filter = ""  # 强制去掉顶部的集数横幅
             
     # 全局视觉特效流组合
     font_spec = (
@@ -482,11 +445,7 @@ def _mux_final_video(
         f"FontSize=18,PrimaryColour=&HFFFFFF,"
         f"OutlineColour=&H000000,Outline=2,"
         f"Alignment=2,MarginV=40'"
-        f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='%{{eif\\:({new_total_duration}-t)\\:d}}':"
-        f"enable='between(t,{countdown_start},{new_total_duration})':"
-        f"x=(w-text_w)/2:y=h/2-90:fontsize=160:fontcolor=red:shadowcolor=black:shadowx=5:shadowy=5"
         f"{ab_text_filter}"
-        f"{banner_filter}"
     )
 
     input_args = ["-i", str(video_path)]
@@ -516,7 +475,40 @@ def _mux_final_video(
     else:
         output_args += ["-an"]
 
-    _run_ffmpeg(input_args + output_args + [str(output_path)], step_name="mux_final")
+    # 1. 临时生成主视频
+    tmp_main = output_path.with_name(f"tmp_main_{platform}.mp4")
+    _run_ffmpeg(input_args + output_args + ["-y", str(tmp_main)], step_name="mux_main")
+    
+    # 2. 如果存在分支，则生成独立打字机片尾并拼接
+    if branch_a and branch_b:
+        from core.endcard_generator import generate_typewriter_endcard
+        tmp_endcard = output_path.with_name(f"tmp_endcard_{platform}.mp4")
+        generate_typewriter_endcard(branch_a, branch_b, tmp_endcard, fps=30, duration_sec=6.0, chars_per_sec=12.0)
+        
+        # 拼接
+        concat_list = output_path.with_name(f"concat_list_final_{platform}.txt")
+        with open(concat_list, "w") as f:
+            f.write(f"file '{tmp_main}'\n")
+            f.write(f"file '{tmp_endcard}'\n")
+            
+        _run_ffmpeg([
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list),
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-y",
+            str(output_path)
+        ], step_name="concat_final_endcard")
+        
+        # 清理
+        tmp_main.unlink(missing_ok=True)
+        tmp_endcard.unlink(missing_ok=True)
+        concat_list.unlink(missing_ok=True)
+    else:
+        # 如果没有分支，直接重命名
+        tmp_main.rename(output_path)
+
     return output_path
 
 
@@ -533,6 +525,7 @@ def compile_video(
     render_mode: Literal["all", "douyin_only", "kuaishou_only", "global_only"] = "all",
     next_branches: dict = None,
     banner_text: str = "",
+    cover_teaser: str = "",
 ) -> dict[str, str]:
     """
     将所有资产合成为最终成品视频（双轨渲染）。
@@ -552,6 +545,12 @@ def compile_video(
         sorted_scenes = sorted(scenes, key=lambda s: s["scene_index"])
         
         # [Cold-Open] 寻找倒数第二个高潮片段
+        cover_path = out_dir / f"{episode_tag}_cover.jpg"
+        cover_scene_idx = sorted_scenes[-1]["scene_index"] # 取最后/高潮画面作封面
+        cover_frame_path = clip_manifest.get(cover_scene_idx, "")
+        if cover_frame_path and Path(cover_frame_path).exists():
+            generate_cover(cover_frame_path, banner_text, cover_teaser, cover_path)
+        
         cold_open_dur = 1.5
         if len(sorted_scenes) >= 3:
             high_tension_idx = sorted_scenes[-2]["scene_index"]

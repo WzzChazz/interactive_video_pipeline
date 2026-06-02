@@ -267,6 +267,8 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
     episode_title = script_data.get("episode_title", "悬疑短剧")
     banner_text = f"第 {ep.episode_number} 集 | {episode_title}" if hasattr(ep, 'episode_number') else f"互动连载 | {episode_title}"
 
+    cover_teaser = script_data.get("cover_teaser", "")
+
     output_paths = compile_video(
         scenes=script_data.get("scenes", []),
         clip_manifest=clip_manifest,
@@ -275,6 +277,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
         theme_key=ep.theme_key if hasattr(ep, 'theme_key') else "hospital_horror",
         next_branches=script_data.get("next_branches", {}),
         banner_text=banner_text,
+        cover_teaser=cover_teaser,
     )
 
     # 生成封面 (Cover Generation)
@@ -289,7 +292,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
         out_dir.mkdir(parents=True, exist_ok=True)
         cover_path = out_dir / f"{episode.episode_tag}_cover.jpg"
         try:
-            generate_cover(Path(climax_image_path), episode_title, cover_path)
+            generate_cover(Path(climax_image_path), episode_title, cover_teaser, cover_path)
             output_paths["cover"] = str(cover_path)
             logger.info("Generated cover: {}", cover_path)
         except Exception as e:

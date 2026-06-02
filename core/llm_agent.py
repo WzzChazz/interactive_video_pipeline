@@ -130,6 +130,10 @@ class EpisodeScript(BaseModel):
         ..., min_length=20, max_length=300,
         description="本集剧情简介，用于抖音发布文案（中文，含话题引导）"
     )
+    cover_teaser: str = Field(
+        default="点击揭开真相！",
+        description="短促、极具吸引力的视频封面引导文字（如：你敢进去吗？真假双生子），限制 10个字以内"
+    )
     chosen_branch: str = Field(..., description="本集驱动分支：A / B / INIT")
     scenes: list[SceneShot] = Field(
         ..., min_length=4, max_length=7,

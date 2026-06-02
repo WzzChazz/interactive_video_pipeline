@@ -67,7 +67,8 @@ finally:
             "--audio", str(Path(audio_path).absolute()),
             "--outfile", str(Path(output_path).absolute()),
             "--face_det_batch_size", "1", # 强制单帧推理，防止 Accelerate 崩溃/OOM
-            "--wav2lip_batch_size", "1"
+            "--wav2lip_batch_size", "1",
+            "--nosmooth" # 修复脸部抖动问题
         ]
         
         patch_code = self._create_monkey_patch_script(script_path, args)
