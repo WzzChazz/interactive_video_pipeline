@@ -99,10 +99,11 @@ class FFmpegRenderer:
             video_input = "[0:v]"
             
         # 标准化缩放，压暗背景，并打上字幕
+        # 增加 10% 画面放大(Center Crop)来裁剪掉视频边缘(右下角)的 AI 水印
         # force_original_aspect_ratio=decrease 确保不变形，周边黑边
         sub_filter = f"subtitles='{srt_path.absolute()}':force_style='FontName=PingFang SC,FontSize=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2,MarginV=40'"
         
-        filter_complex += f"{video_input}scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{sub_filter}[final_v]"
+        filter_complex += f"{video_input}crop=iw*0.9:ih*0.9:(iw-iw*0.9)/2:(ih-ih*0.9)/2,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black,{sub_filter}[final_v]"
         
         cmd = [
             "ffmpeg", "-y",

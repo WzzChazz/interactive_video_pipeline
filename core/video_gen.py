@@ -455,16 +455,29 @@ def generate_single_clip(
     save_path: Path,
     camera_note: str = ""
 ) -> Path:
-    """生成单个视频片段。"""
-    if VIDEO_PROVIDER == "zhipu":
-        logger.info("Generating clip scene {} via Zhipu CogVideoX API...", scene_index)
-        return _zhipu_generate(image_path, save_path, prompt=camera_note)
-    elif VIDEO_PROVIDER == "hailuo":
-        logger.info("Generating clip scene {} via Hailuo API...", scene_index)
-        return _hailuo_generate(image_path, save_path, prompt=camera_note)
-    else:
-        logger.info("Generating clip scene {} via Kling API...", scene_index)
-        return _kling_generate(image_path, save_path, prompt=camera_note)
+    """生成单个视频片段，自带容灾兜底。"""
+    try:
+        if VIDEO_PROVIDER == "zhipu":
+            logger.info("Generating clip scene {} via Zhipu CogVideoX API...", scene_index)
+            return _zhipu_generate(image_path, save_path, prompt=camera_note)
+        elif VIDEO_PROVIDER == "hailuo":
+            logger.info("Generating clip scene {} via Hailuo API...", scene_index)
+            return _hailuo_generate(image_path, save_path, prompt=camera_note)
+        else:
+            logger.info("Generating clip scene {} via Kling API...", scene_index)
+            return _kling_generate(image_path, save_path, prompt=camera_note)
+    except Exception as e:
+        logger.error(f"Generative API failed for scene {scene_index}: {e}. Activating Fallback...")
+        from core.stock_footage_fallback import fetch_fallback_video
+        
+        # 提取核心关键词用于 Pexels 搜索，默认使用暗黑恐怖风格
+        keyword = "dark eerie background"
+        if camera_note:
+            words = camera_note.replace(",", " ").split()
+            if len(words) >= 2:
+                keyword = f"{words[0]} {words[1]} dark"
+                
+        return fetch_fallback_video(keyword, save_path)
 
 def generate_video_clips(
     scenes: list[dict],

@@ -70,28 +70,35 @@ class VideoPipelineEngine:
             
             # 1. 动态生成情感 TTS
             raw_voice_path = Path(f"./storage/temp/{self.episode_tag}/audio/raw_scene_{idx:02d}.wav")
-            tts.generate(scene['role'], scene['emotion'], scene['text'], raw_voice_path)
+            if scene['text']:
+                tts.generate(scene['role'], scene['emotion'], scene['text'], raw_voice_path)
+            else:
+                raw_voice_path = None
+                logger.info(f"[Pipeline] Scene {idx} is a Reaction Shot (No dialogue). Skipping TTS.")
             
             # 2. 混合音频与音效 (精确锚点打点)
             mixed_audio_path = Path(f"./storage/temp/{self.episode_tag}/audio/mixed_scene_{idx:02d}.aac")
             mixer.mix_scene_audio(
-                voice_path=str(raw_voice_path),
+                voice_path=str(raw_voice_path) if raw_voice_path else None,
                 sfx_names=scene['sfx'],
                 action_timestamp=scene['action_timestamp'],
                 output_path=str(mixed_audio_path)
             )
             
-            # 3. 本地面部驱动与高清修复 (目前 Bypass，等待权重下载与 PyTorch 编译)
+            # 3. 本地面部驱动与高清修复
             lipsync_video_path = Path(f"./storage/temp/{self.episode_tag}/video/lipsync_scene_{idx:02d}.mp4")
             lipsync_video_path.parent.mkdir(parents=True, exist_ok=True)
-            # lipsync.generate_talking_head(
-            #     video_source=scene['video_source'],
-            #     audio_source=str(mixed_audio_path),
-            #     final_out=str(lipsync_video_path)
-            # )
             
-            # 由于 Bypass，直接使用原始视频传递给 FFmpeg 渲染器
-            bypassed_video = scene['video_source']
+            if scene['text']:
+                lipsync.generate_talking_head(
+                    video_source=scene['video_source'],
+                    audio_source=str(mixed_audio_path),
+                    final_out=str(lipsync_video_path)
+                )
+                bypassed_video = str(lipsync_video_path)
+            else:
+                logger.info(f"[Pipeline] Scene {idx} bypassing LipSync to preserve raw visual terror.")
+                bypassed_video = scene['video_source']
             
             # 4. 压制最终成片 (包含冻结帧与字幕硬编码)
             final_scene_path = Path(f"./storage/temp/{self.episode_tag}/render/final_scene_{idx:02d}.mp4")

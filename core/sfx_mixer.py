@@ -12,6 +12,9 @@ import subprocess
 from pathlib import Path
 from loguru import logger
 import os
+import requests
+from typing import Optional
+from config.settings import ELEVENLABS_API_KEY
 
 class AudioMixerError(Exception):
     pass
@@ -21,44 +24,81 @@ class SFXMixer:
         self.sfx_lib = Path(sfx_library_dir)
         self.sfx_lib.mkdir(parents=True, exist_ok=True)
         
-    def _find_sfx(self, sfx_name: str) -> Path:
-        """从本地库匹配音效，暂时找不到返回None（未来可接API动态生成）"""
+    def _generate_sfx_elevenlabs(self, sfx_name: str) -> Optional[Path]:
+        """调用 ElevenLabs SFX API 动态生成音效"""
+        if not ELEVENLABS_API_KEY:
+            logger.warning("ELEVENLABS_API_KEY not configured. Cannot generate SFX.")
+            return None
+            
+        logger.info(f"Generating SFX via ElevenLabs: '{sfx_name}'")
+        url = "https://api.elevenlabs.io/v1/sound-generation"
+        headers = {
+            "xi-api-key": ELEVENLABS_API_KEY,
+            "Content-Type": "application/json"
+        }
+        data = {
+            "text": sfx_name.replace("_", " "),
+            "duration_seconds": 3,
+            "prompt_influence": 0.3
+        }
+        try:
+            response = requests.post(url, headers=headers, json=data)
+            if response.status_code == 200:
+                target_path = self.sfx_lib / f"{sfx_name}.mp3"
+                with open(target_path, "wb") as f:
+                    f.write(response.content)
+                logger.success(f"Generated and cached SFX: {sfx_name}.mp3")
+                return target_path
+            else:
+                logger.error(f"ElevenLabs SFX API failed: {response.text}")
+        except Exception as e:
+            logger.error(f"Error calling ElevenLabs SFX API: {e}")
+            
+        return None
+
+    def _find_sfx(self, sfx_name: str) -> Optional[Path]:
+        """从本地库匹配音效，找不到则调用 ElevenLabs 生成"""
         target = self.sfx_lib / f"{sfx_name}.wav"
         if target.exists():
             return target
         target_mp3 = self.sfx_lib / f"{sfx_name}.mp3"
         if target_mp3.exists():
             return target_mp3
-        return None
+        
+        # 本地找不到，尝试动态生成
+        return self._generate_sfx_elevenlabs(sfx_name)
 
     def mix_scene_audio(self, 
-                        voice_path: str, 
+                        voice_path: Optional[str], 
                         sfx_names: list, 
                         action_timestamp: float, 
                         output_path: str):
         """
         核心混音引擎：利用 FFmpeg filter_complex 实现：
         1. 强制重采样到 44100
-        2. 人声：音量 +2dB
+        2. 人声：音量 +2dB (若无人声则生成5秒空静音轨)
         3. 环境音(Ambient)：循环播放，-15dB
         4. 动作音效(Foley)：精确延迟 (adelay) 到 action_timestamp
         """
-        voice_path = Path(voice_path)
         output_path = Path(output_path)
-        
-        if not voice_path.exists():
-            raise AudioMixerError(f"Voice file missing: {voice_path}")
-            
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        inputs = ["-i", str(voice_path)]
         filter_complex = []
         mix_inputs = []
         
-        # 1. 处理人声轨 (强制重采样 + 提音量)
-        filter_complex.append(f"[0:a]aresample=44100,volume=1.2[v_out];")
+        if voice_path:
+            voice_path = Path(voice_path)
+            if not voice_path.exists():
+                raise AudioMixerError(f"Voice file missing: {voice_path}")
+            inputs = ["-i", str(voice_path)]
+            # 1. 处理人声轨 (强制重采样 + 提音量)
+            filter_complex.append(f"[0:a]aresample=44100,volume=1.2[v_out];")
+        else:
+            # 1. 无对白反应镜头：生成 5 秒静音音轨作为主轴
+            inputs = ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo:d=5.0"]
+            filter_complex.append(f"[0:a]aresample=44100,volume=0[v_out];")
+            
         mix_inputs.append("[v_out]")
-        
         input_idx = 1
         
         # 2. 解析音效轨

@@ -29,3 +29,6 @@ storage/chrome_profile/
 storage/database.db*
 storage/pipeline.db*
 
+database/app.db
+storage/
+.env

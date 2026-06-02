@@ -28,26 +28,18 @@ class LipSyncEngine:
         
     def _create_monkey_patch_script(self, target_script: str, args: list) -> str:
         """
-        优雅的源码劫持：生成一个临时 Python 脚本，
-        在执行真正的推理前，动态篡改 torch.cuda 的底层指向。
+        优雅的封装执行：生成一个临时 Python 脚本动态执行。
+        底层库已经被原生修改支持 MPS，无需再污染 torch.cuda。
         """
         args_str = ", ".join([f"'{a}'" for a in args])
         
-        # 使用 sys.argv 欺骗 argparse
         patch_code = f"""
 import sys
 import torch
 import gc
 
-# [Monkey Patch] 劫持 CUDA 为 MPS
-if not hasattr(torch, 'cuda') or not torch.cuda.is_available():
-    torch.cuda.is_available = lambda: True
-    torch.device = lambda dev: torch.device("mps") if "cuda" in str(dev) else torch.device(dev)
-    
 # 伪造命令行参数
 sys.argv = ['{target_script}'] + [{args_str}]
-
-print("[Monkey Patch] Successfully injected MPS redirect for CUDA!")
 
 try:
     # 动态执行原脚本
@@ -74,7 +66,8 @@ finally:
             "--face", str(Path(video_path).absolute()),
             "--audio", str(Path(audio_path).absolute()),
             "--outfile", str(Path(output_path).absolute()),
-            "--nosmooth" # 防止过度平滑导致画面撕裂
+            "--face_det_batch_size", "1", # 强制单帧推理，防止 Accelerate 崩溃/OOM
+            "--wav2lip_batch_size", "1"
         ]
         
         patch_code = self._create_monkey_patch_script(script_path, args)
@@ -84,10 +77,11 @@ finally:
         with open(runner_path, "w") as f:
             f.write(patch_code)
             
+        import sys
         try:
             # 在 Wav2Lip 目录下执行劫持脚本
             subprocess.run(
-                ["python", "mps_runner.py"],
+                [sys.executable, "mps_runner.py"],
                 cwd=self.wav2lip_dir,
                 check=True,
                 capture_output=True,
@@ -107,10 +101,9 @@ finally:
         script_path = "inference_codeformer.py"
         
         args = [
-            "-w", "0.7",  # 保留一部分原脸特征，防止修复过度
+            "-w", "0.3",  # 降低保真度权重，强制 AI 使用最高清细节覆盖 Wav2Lip 的模糊嘴部
             "-i", str(Path(input_video).absolute()),
-            "-o", str(Path(output_dir).absolute()),
-            "--bg_upsampler", "realesrgan"
+            "-o", str(Path(output_dir).absolute())
         ]
         
         patch_code = self._create_monkey_patch_script(script_path, args)
@@ -118,9 +111,10 @@ finally:
         with open(runner_path, "w") as f:
             f.write(patch_code)
             
+        import sys
         try:
             subprocess.run(
-                ["python", "mps_runner.py"],
+                [sys.executable, "mps_runner.py"],
                 cwd=self.codeformer_dir,
                 check=True,
                 capture_output=True,
@@ -133,14 +127,45 @@ finally:
 
     def generate_talking_head(self, video_source: str, audio_source: str, final_out: str):
         """完整的对口型 + 画质修复流水线"""
+        import shutil
+        import os
+        
         temp_w2l_out = str(Path(final_out).with_suffix(".w2l.mp4"))
         
         # 1. Wav2Lip 合成嘴型 (会导致嘴部模糊)
         self.run_wav2lip(video_source, audio_source, temp_w2l_out)
         
-        # 2. CodeFormer 画质急救 (输出通常带一个复杂后缀名)
-        restored_dir = str(Path(final_out).parent / "restored")
-        self.run_codeformer(temp_w2l_out, restored_dir)
+        # 2. CodeFormer 画质急救 (如果没有下载完毕则跳过，防止崩溃)
+        codeformer_weight = Path("/Users/mac/project/interactive_video_pipeline/local_models/CodeFormer/weights/CodeFormer/codeformer.pth")
         
-        # TODO: 把 CodeFormer 目录里的最终修复结果移回 final_out
-        pass
+        if codeformer_weight.exists() and codeformer_weight.stat().st_size > 100 * 1024 * 1024:
+            logger.info("[LipSync] CodeFormer weights detected, initiating face restoration...")
+            restored_dir = str(Path(final_out).parent / "restored")
+            self.run_codeformer(temp_w2l_out, restored_dir)
+            
+            # --- 补全的获取 CodeFormer 视频逻辑 ---
+            try:
+                # CodeFormer 默认会在 restored_dir 下生成类似结果，我们直接搜索 mp4
+                restored_videos = list(Path(restored_dir).rglob("*.mp4"))
+                if restored_videos:
+                    # 按照修改时间排序，拿到最新生成的视频
+                    best_video = sorted(restored_videos, key=lambda x: x.stat().st_mtime, reverse=True)[0]
+                    shutil.move(str(best_video), final_out)
+                    logger.success(f"[LipSync] 成功输出 CodeFormer 修复后的高清视频: {final_out}")
+                    
+                    # 清理临时文件和目录
+                    if Path(temp_w2l_out).exists():
+                        os.remove(temp_w2l_out)
+                    shutil.rmtree(restored_dir, ignore_errors=True)
+                    return final_out
+                else:
+                    logger.error("[LipSync] CodeFormer 运行完毕但未找到 mp4 文件，回退至 Wav2Lip 原片。")
+            except Exception as e:
+                logger.error(f"[LipSync] 移动 CodeFormer 结果失败: {e}，回退至 Wav2Lip 原片。")
+        else:
+            logger.warning("[LipSync] CodeFormer weights missing or incomplete! Bypassing face restoration to prevent pipeline crash.")
+            
+        # 安全兜底：如果走到这里，说明高清修复失败或未运行
+        if not Path(final_out).exists():
+            shutil.move(temp_w2l_out, final_out)
+            logger.success(f"[LipSync] 已输出 Wav2Lip 原始视频 (未进行画质修复) 至 {final_out}")

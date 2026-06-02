@@ -24,121 +24,97 @@ class AudioGenError(Exception):
     pass
 
 
+import re
+import subprocess
+import hashlib
+
+VOICE_ROUTER = {
+    "旁白": "zh-CN-YunxiNeural",       # 男声，稳重阳光
+    "主角": "zh-CN-YunxiNeural",
+    "医生": "zh-CN-YunyangNeural",     # 新闻播音男声，适合沉稳大叔
+    "警察": "zh-CN-YunjianNeural",     # 低沉男声，适合悬疑
+    "护士": "zh-CN-XiaoxiaoNeural",    # 甜美年轻女声
+    "小女孩": "zh-CN-XiaoyiNeural",    # 活泼女声，适合女童
+    "神秘人": "zh-CN-YunjianNeural",   # 借用低沉男声替代沙哑
+    "反派": "zh-CN-YunjianNeural",
+    "DEFAULT": "zh-CN-YunxiNeural"
+}
+
+def _get_voice_for_speaker(speaker: str) -> str:
+    """动态多角色声纹路由"""
+    if not speaker:
+        return VOICE_ROUTER["DEFAULT"]
+    
+    # 精确匹配
+    for key, voice in VOICE_ROUTER.items():
+        if key in speaker:
+            return voice
+            
+    # 如果没匹配到，根据名字的 hash 稳定分配一个声音，保证同一个未知角色的声音在整部剧中是一致的
+    available_voices = list(set(VOICE_ROUTER.values()))
+    h = int(hashlib.md5(speaker.encode('utf-8')).hexdigest(), 16)
+    return available_voices[h % len(available_voices)]
+
+def _is_scream(text: str) -> bool:
+    """极端情绪降级：判断是否是纯尖叫/呼救，用于拦截交给真实音效引擎"""
+    if len(text) > 10:
+        return False
+    if re.search(r"啊+|救命|不+|快跑", text) and ("！" in text or "!" in text):
+        return True
+    return False
+
 @retry(retry=retry_if_exception_type(AudioGenError),
        stop=stop_after_attempt(API_MAX_RETRIES),
        wait=wait_exponential(min=3, max=30), reraise=True)
 def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
                    speaker: str = "", theme_key: str = "hospital_horror") -> Path:
-    """调用阿里通义 DashScope (CosyVoice) 生成配音 MP3。"""
-    if not DASHSCOPE_API_KEY:
-        raise AudioGenError("DASHSCOPE_API_KEY not configured.")
+    """调用 edge-tts 生成配音 MP3，并强制生成精确字幕 .vtt"""
     
-    from config.settings import DASHSCOPE_NARRATOR_VOICE_ID
-    from config.themes import THEMES
-    
-    # 主题配音配置
-    theme_config = THEMES.get(theme_key, THEMES["hospital_horror"])
-    
-    # 动态声音映射 (Voice Casting)
-    if not speaker or speaker in ("旁白", "Narrator"):
-        vid = theme_config.get("voice_map", {}).get("旁白", "longlaotie")
-    elif speaker in ("系统", "System", "未知"):
-        vid = theme_config.get("voice_map", {}).get("系统", "longxiaoxia")
-    else:
-        if "林悦" in speaker and "克隆" in speaker:
-            vid = "longxiaoxia"
-        elif "林悦" in speaker:
-            vid = "longxiaochun"
-        else:
-            vid = theme_config.get("voice_map", {}).get(speaker)
-            if not vid:
-                vid = theme_config.get("voice_id", "longshuo")
-    
-    try:
-        import dashscope
-        from dashscope.audio.tts_v2 import SpeechSynthesizer, ResultCallback
-    except ImportError:
-        raise AudioGenError("dashscope package not installed. Run: pip install dashscope")
-        
-    dashscope.api_key = DASHSCOPE_API_KEY
-    
-    # 将大模型传来的简短情绪标签，扩展为 CosyVoice 强力支持的“丰富情境指导词 (Instruction)”
-    # 这能够极其明显地改变配音的面部表情管理和语气节奏
-    speech_rate = 0.85
-    if not speaker or speaker in ("旁白", " Narrator"):
-        instruction_str = "用充满悬疑感、极其压抑且低沉平缓的语气进行恐怖解说。"
-    elif speaker in ("系统", "System"):
-        instruction_str = "用冰冷、机械、毫无人类情感波动的语气下达指令。"
-    else:
-        # 检测克隆体角色：如果说话人名字包含"克隆"，强制使用冰冷机械音
-        is_clone_character = speaker and ("克隆" in speaker)
-        
-        if is_clone_character or emotion == "clone":
-            instruction_str = "毫无感情的克隆体，语气极其冰冷、机械、空洞，语速缓慢，令人毛骨悚然。像一个没有灵魂的人偶在说话。"
-            speech_rate = 0.65
-        elif emotion in ("fearful", "nervous", "shocked", "terrified"):
-            instruction_str = "处于极度恐怖且危险的环境中，语气压抑、带有一丝颤抖和强烈的恐惧感，仿佛在尽力压低声音，甚至带着快要哭出来的惊悚感。"
-        elif emotion == "cold":
-            instruction_str = "语气极其冰冷、毫无感情、令人毛骨悚然的平静，带着一种机械般的冷酷感和压迫感。"
-        elif emotion == "angry":
-            instruction_str = "情绪极其愤怒，声音提高，咬牙切齿地说话，充满攻击性。"
-        elif emotion == "sad":
-            instruction_str = "情绪非常悲伤，声音哽咽，充满绝望感和无力感。"
-        elif emotion == "excited" or emotion == "happy":
-            instruction_str = "情绪激动，说话急促，带有癫狂或者兴奋的语气。"
-        elif emotion == "determined":
-            instruction_str = "深呼吸，语气坚定果决，充满绝境求生的勇气。"
-        else:
-            instruction_str = "身处诡异的环境中，语气自然但带有一种本能的警惕和紧张感。"
-    
-    # 建立回调机制将音频流写入文件
-    class FileCallback(ResultCallback):
-        def __init__(self, file_path):
-            self.file_path = file_path
-            self.file = None
-            self.error_msg = None
-
-        def on_open(self):
-            self.file = open(self.file_path, "wb")
-
-        def on_data(self, data: bytes):
-            if self.file:
-                self.file.write(data)
-
-        def on_complete(self):
-            if self.file:
-                self.file.close()
-
-        def on_error(self, message: str):
-            if self.file:
-                self.file.close()
-            self.error_msg = message
+    # 极端情绪降级拦截：如果是纯尖叫，直接生成真人惨叫音效
+    if _is_scream(text):
+        logger.warning(f"Scream intercepted: '{text}'. Redirecting to SFX engine for realistic scream.")
+        # 我们用英文提示词给 ElevenLabs SFX 让它生成尖叫
+        scream_prompt = "A terrifying, realistic, blood-curdling human scream of absolute panic and fear"
+        if "女" in speaker or "护士" in speaker:
+            scream_prompt = "A terrifying, realistic, blood-curdling female scream of absolute panic and fear"
+        elif "男" in speaker:
+            scream_prompt = "A terrifying, realistic, blood-curdling male scream of absolute panic and fear"
             
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    cb = FileCallback(save_path)
+        try:
+            generate_sfx(scream_prompt, save_path, duration_seconds=2)
+            # 伪造一个空的 VTT，因为尖叫不需要在屏幕上打字幕
+            vtt_path = save_path.with_suffix(".vtt")
+            vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+            return save_path
+        except Exception as e:
+            logger.error(f"Scream SFX failed, falling back to TTS: {e}")
+            # 如果音效失败，继续往下走 TTS 兜底
+            pass
+
+    # SSML 悬疑断句解析：将 [pause:Xs] 替换为标点，或者直接用 SSML（这里用逗号/句号最简单有效）
+    # edge-tts 在遇到多个句号时会自动拉长停顿
+    processed_text = re.sub(r'\[pause:(\d+\.?\d*)s?\]', lambda m: "。" * max(1, int(float(m.group(1)) * 2)), text)
+    processed_text = processed_text.replace("...", "。。。")
     
-    # 修正模型：longxiaochun 等经典音色必须使用 cosyvoice-v1
-    target_model = "cosyvoice-v1"
-    # 过滤掉角色名和无用的引号，防止 TTS 把它读出来（例如把 "林悦：“谁在那儿？”" 变成 "谁在那儿？"）
-    import re
-    clean_text = re.sub(r'^[^:：]+[:：]\s*', '', text)
-    clean_text = clean_text.replace('“', '').replace('”', '').replace('"', '').strip()
+    voice_id = _get_voice_for_speaker(speaker)
+    vtt_path = save_path.with_suffix(".vtt")
+    
+    # 使用 python3 -m edge_tts 避免全局 PATH 找不到
+    cmd = [
+        "python3", "-m", "edge_tts",
+        "--text", processed_text,
+        "--voice", voice_id,
+        "--rate=-10%", # 悬疑剧整体语速降10%，增加压迫感。注意必须用 = 号，否则 argparse 会把 -10% 当成 flag
+        "--write-media", str(save_path),
+        "--write-subtitles", str(vtt_path)
+    ]
     
     try:
-        synthesizer = SpeechSynthesizer(
-            model=target_model, 
-            voice=vid, 
-            instruction=instruction_str,
-            speech_rate=speech_rate, # 稍微放慢语速，增加悬疑感和压迫感
-            callback=cb
-        )
-        synthesizer.call(clean_text)
-        if cb.error_msg:
-            raise AudioGenError(f"DashScope TTS Error: {cb.error_msg}")
-    except Exception as e:
-        raise AudioGenError(f"DashScope TTS failed: {e}") from e
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        raise AudioGenError(f"Edge-TTS failed: {e.stderr}")
         
-    logger.debug("Voice saved: {}", save_path)
+    logger.debug("Voice (Edge-TTS) and VTT saved: {}", save_path)
     return save_path
 
 
@@ -148,11 +124,9 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
 def generate_sfx(prompt: str, save_path: Path,
                  duration_seconds: int = CLIP_DURATION_SECONDS) -> Path:
     from config.settings import USE_ELEVENLABS_SFX
-    if not USE_ELEVENLABS_SFX:
-        logger.info("ElevenLabs SFX is disabled via switch. Generating local atmospheric soundscape using FFmpeg lavfi.")
+    def _generate_fallback_sfx():
         import subprocess
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        # 生成令人不安的悬疑氛围音：包含极低频心跳/轰鸣 (40Hz) 和高频空旷白噪
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi",
             "-i", "aevalsrc='random(0)*0.03*sin(2*PI*t*0.5) + sin(2*PI*t*40)*0.1'",
@@ -166,9 +140,15 @@ def generate_sfx(prompt: str, save_path: Path,
             return save_path
         except subprocess.CalledProcessError as e:
             raise AudioGenError(f"Local FFmpeg SFX generation failed: {e.stderr.decode()}")
+
+    if not USE_ELEVENLABS_SFX:
+        logger.info("ElevenLabs SFX is disabled via switch. Generating local atmospheric soundscape using FFmpeg lavfi.")
+        return _generate_fallback_sfx()
             
     if not ELEVENLABS_API_KEY:
-        raise AudioGenError("ELEVENLABS_API_KEY not configured.")
+        logger.warning("ELEVENLABS_API_KEY not configured. Falling back to synthetic SFX.")
+        return _generate_fallback_sfx()
+        
     try:
         resp = requests.post(
             f"{_EL_BASE}/sound-generation",
@@ -180,10 +160,10 @@ def generate_sfx(prompt: str, save_path: Path,
         resp.raise_for_status()
     except requests.RequestException as e:
         if e.response is not None and e.response.status_code in (401, 402, 429):
-            error_msg = f"SFX generation FAILED due to API quota/auth (HTTP {e.response.status_code}). Stopping pipeline to save costs."
-            logger.error(error_msg)
-            raise AudioGenError(error_msg)
-        raise AudioGenError(f"SFX request failed: {e}") from e
+            logger.warning(f"ElevenLabs SFX API quota/auth error (HTTP {e.response.status_code}). Activating synthetic SFX fallback.")
+            return _generate_fallback_sfx()
+        logger.error(f"ElevenLabs SFX request failed: {e}. Activating synthetic SFX fallback.")
+        return _generate_fallback_sfx()
     save_path.parent.mkdir(parents=True, exist_ok=True)
     save_path.write_bytes(resp.content)
     logger.debug("SFX saved ({} bytes): {}", len(resp.content), save_path)

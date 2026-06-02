@@ -39,6 +39,7 @@ DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
 # ──────────────────────────────────────────────────────────
 FLUX_API_KEY: str = os.getenv("FLUX_API_KEY", "")
 FLUX_API_URL: str = os.getenv("FLUX_API_URL", "https://api.siliconflow.cn/v1/images/generations")
+USE_LIPSYNC: bool = os.getenv("USE_LIPSYNC", "false").lower() == "true"
 
 MIDJOURNEY_API_KEY: str = os.getenv("MIDJOURNEY_API_KEY", "")
 

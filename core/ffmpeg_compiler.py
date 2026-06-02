@@ -118,28 +118,77 @@ def _seconds_to_srt_time(seconds: float) -> str:
     ms = int((seconds - int(seconds)) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
+def _parse_time_to_seconds(t_str: str) -> float:
+    try:
+        h, m, s = t_str.strip().split(':')
+        return int(h) * 3600 + int(m) * 60 + float(s)
+    except:
+        return 0.0
 
-def _generate_srt(scenes: list[dict], scene_durations: list[float], lang: str = "cn") -> str:
+def _generate_srt(scenes: list[dict], scene_durations: list[float], audio_manifest: dict[int, dict[str, str]], lang: str = "cn") -> str:
     """
-    根据分镜台词和时间戳生成 SRT 字幕内容，支持动态轴。
+    根据 Edge-TTS 产出的高精度 VTT 时间戳或回退到分镜时长，生成最终 SRT 字幕内容。
     """
     lines = []
     current_time = 0.0
+    srt_idx = 1
+    
     for i, scene in enumerate(scenes):
         start = current_time
         dur = scene_durations[i]
-        end = start + dur - 0.2  # 留 0.2s 间隔，防字幕重叠
+        end = start + dur - 0.1
         if end <= start:
             end = start + 0.1
         current_time += dur
         
+        idx = scene["scene_index"]
         text  = scene.get("dialogue", "") if lang == "cn" else scene.get("english_dialogue", "")
         if not text:
             continue
-        lines.append(str(i + 1))
-        lines.append(f"{_seconds_to_srt_time(start)} --> {_seconds_to_srt_time(end)}")
-        lines.append(text)
-        lines.append("")
+            
+        audio_map = audio_manifest.get(idx, {})
+        voice_path = audio_map.get("voice", "")
+        vtt_path = Path(voice_path).with_suffix(".vtt") if voice_path else None
+        
+        if lang == "cn" and vtt_path and vtt_path.exists():
+            # 使用高精度 VTT 字幕
+            vtt_content = vtt_path.read_text(encoding="utf-8")
+            vtt_lines = vtt_content.splitlines()
+            v_i = 0
+            while v_i < len(vtt_lines):
+                line = vtt_lines[v_i].strip()
+                if "-->" in line:
+                    start_str, end_str = line.split("-->")
+                    start_s = _parse_time_to_seconds(start_str) + start
+                    end_s = _parse_time_to_seconds(end_str) + start
+                    
+                    v_i += 1
+                    sub_text = ""
+                    while v_i < len(vtt_lines) and vtt_lines[v_i].strip() != "":
+                        sub_text += vtt_lines[v_i].strip() + "\n"
+                        v_i += 1
+                    sub_text = sub_text.strip()
+                    
+                    # 避免字幕溢出当前分镜
+                    if start_s > end:
+                        continue
+                    end_s = min(end_s, end)
+                    
+                    lines.append(str(srt_idx))
+                    lines.append(f"{_seconds_to_srt_time(start_s)} --> {_seconds_to_srt_time(end_s)}")
+                    lines.append(sub_text)
+                    lines.append("")
+                    srt_idx += 1
+                else:
+                    v_i += 1
+        else:
+            # Fallback 粗糙字幕
+            lines.append(str(srt_idx))
+            lines.append(f"{_seconds_to_srt_time(start)} --> {_seconds_to_srt_time(end)}")
+            lines.append(text)
+            lines.append("")
+            srt_idx += 1
+            
     return "\n".join(lines)
 
 
@@ -285,20 +334,29 @@ def _build_audio_track(
         return None
 
     # 混音总线路由 (Buses)
-    # 注意: amix 的 dropout_transition 有严重 bug, 当短音频结束后会把整个混音音量
-    # 衰减到零. 必须设置 dropout_transition=0 并使用 normalize=0 防止自动音量衰减.
     n_voices = len(voice_inputs)
     n_sfx    = len(sfx_inputs)
     
-    # 1. 混合所有人声 (dropout_transition=0 防止音量衰减, normalize=0 防止自动降低音量)
-    filter_parts.append(f"{''.join(voice_inputs)}amix=inputs={n_voices}:duration=longest:dropout_transition=0:normalize=0[voice_mix]")
+    # 1. 混合所有人声
+    filter_parts.append(f"{''.join(voice_inputs)}amix=inputs={n_voices}:duration=longest:dropout_transition=0:normalize=0[voice_raw]")
     
-    # 2. 混合所有环境音效 (降低整体音量作为背景音)
-    filter_parts.append(f"{''.join(sfx_inputs)}amix=inputs={n_sfx}:duration=longest:dropout_transition=0:normalize=0,volume=0.25[sfx_mix]")
+    # 影视级声学后处理：高通滤波(切低频去手机浑浊) + 空间混响(aecho)
+    reverb = "aecho=0.8:0.3:50:0.3" if "hospital" in theme_key or "school" in theme_key else ""
+    eq_filter = f"highpass=f=80{',' + reverb if reverb else ''}"
     
-    # 3. 最终混合人声和环境音，并统一做一次母带响度标准化 (解决杂音和爆音)
+    # 将人声分成两轨：一轨用于最终输出 [voice_main]，一轨用于触发背景音闪避 [voice_sc]
+    filter_parts.append(f"[voice_raw]{eq_filter},asplit=2[voice_main][voice_sc]")
+    
+    # 2. 混合所有环境音效 
+    filter_parts.append(f"{''.join(sfx_inputs)}amix=inputs={n_sfx}:duration=longest:dropout_transition=0:normalize=0,volume=0.35[sfx_mix]")
+    
+    # 3. 智能音频闪避 (Audio Ducking via Sidechain Compression)
+    # 当人声 [voice_sc] 出现时，环境音 [sfx_mix] 会被按照 ratio=5 压缩降低音量
+    filter_parts.append(f"[sfx_mix][voice_sc]sidechaincompress=threshold=0.03:ratio=5:attack=10:release=300[ducked_sfx]")
+    
+    # 4. 最终混合人声和被闪避的环境音，并做母带响度标准化 (Loudnorm)
     filter_parts.append(
-        f"[voice_mix][sfx_mix]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
+        f"[voice_main][ducked_sfx]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,"
         f"loudnorm=I=-16:TP=-1.5:LRA=11,apad=pad_dur=3.5[aout]"
     )
 
@@ -522,6 +580,22 @@ def compile_video(
             path = clip_manifest.get(idx, "")
             if not path or not Path(path).exists():
                 raise FFmpegError(f"Scene {idx} clip not found: '{path}'")
+            
+            # --- START LIPSYNC INJECTION ---
+            if idx != -1:
+                from config.settings import USE_LIPSYNC
+                audio_map = audio_manifest.get(idx, {})
+                voice_path = audio_map.get("voice", "")
+                
+                # Check if lipsync is enabled, voice exists, and it's not a reaction shot (empty dialogue)
+                if USE_LIPSYNC and voice_path and Path(voice_path).exists() and Path(voice_path).stat().st_size > 0 and scene.get("dialogue"):
+                    logger.info("Applying LipSync + CodeFormer to Scene {}...", idx)
+                    from core.lip_sync_engine import LipSyncEngine
+                    lipsync = LipSyncEngine()
+                    final_lipsync_path = tmp_dir / f"lipsync_scene_{idx:02d}.mp4"
+                    path = lipsync.generate_talking_head(path, voice_path, str(final_lipsync_path))
+            # --- END LIPSYNC INJECTION ---
+            
             clip_paths.append(path)
             
             if idx == -1:
@@ -534,6 +608,13 @@ def compile_video(
                     dur = _get_audio_duration(voice_path) + 0.3
                     dur = min(dur, float(CLIP_DURATION_SECONDS))
                     dur = max(dur, 2.0)
+                    
+                    # Wav2Lip trims the video to the audio length, so we must not ask FFmpeg to concat beyond the EOF
+                    if USE_LIPSYNC and scene.get("dialogue"):
+                        actual_vid_dur = _get_audio_duration(path)
+                        # We use the actual duration minus a tiny safety margin to prevent concat demuxer EOF errors
+                        dur = min(dur, actual_vid_dur - 0.03)
+                        dur = max(dur, 0.5) # ensure minimum
                 else:
                     dur = float(CLIP_DURATION_SECONDS)
             scene_durations.append(dur)
@@ -555,8 +636,8 @@ def compile_video(
         # ── 4. 生成字幕并合片 (双轨专属渲染) ───────────────────────────────
         result_paths = {}
         
-        # 中文字幕通用
-        srt_cn_content = _generate_srt(sorted_scenes, scene_durations, lang="cn")
+        # 中文字幕通用 (传递 audio_manifest 用于获取 VTT 时间轴)
+        srt_cn_content = _generate_srt(sorted_scenes, scene_durations, audio_manifest, lang="cn")
         srt_cn_path = tmp_dir / "subs_cn.srt"
         with open(srt_cn_path, "w", encoding="utf-8") as f:
             f.write(srt_cn_content)
@@ -572,7 +653,7 @@ def compile_video(
             result_paths["kuaishou"] = str(final_ks)
             
         if render_mode in ("all", "global_only"):
-            srt_en_content = _generate_srt(sorted_scenes, scene_durations, lang="en")
+            srt_en_content = _generate_srt(sorted_scenes, scene_durations, audio_manifest, lang="en")
             srt_en_path = tmp_dir / "subs_en.srt"
             with open(srt_en_path, "w", encoding="utf-8") as f:
                 f.write(srt_en_content)

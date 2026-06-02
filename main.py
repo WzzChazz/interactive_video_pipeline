@@ -219,19 +219,16 @@ def stage_generate_assets(script: dict, episode: Episode) -> dict:
     audio_manifest: dict[int, dict]      = {}
     clip_manifest:  dict[int, str]       = {}
 
-    # 语音线程（与图片并行启动）
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        audio_future = pool.submit(generate_audio, scenes, tag, episode.id, episode.theme_key)
-        image_future = pool.submit(generate_images, scenes, tag, None, episode.id)
+    # FAIL FAST 策略：必须先跑完且无报错，才允许跑极其昂贵的视频大模型 API！
+    # 彻底废除并发执行，改为严格串行。
+    logger.info("[Stage 3/6] Generating audio first (Fail-Fast protection)...")
+    audio_manifest = generate_audio(scenes, tag, episode.id, episode.theme_key)
 
-        image_manifest = image_future.result()   # 等待生图完成
+    logger.info("[Stage 3/6] Generating images...")
+    image_manifest = generate_images(scenes, tag, None, episode.id)
 
-        # 图生视频（依赖 image_manifest，串行在图片之后，但与生音频并行！）
-        logger.info("[Stage 4/6] Image→Video (Running concurrently with Audio)...")
-        clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id)
-        
-        # 视频生成极慢（5-10分钟），此时再同步等待音频（大概率早已完成）
-        audio_manifest = audio_future.result()
+    logger.info("[Stage 4/6] Image→Video (Executing sequentially to save API costs)...")
+    clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id)
 
     asset_manifest = {
         "images": image_manifest,
@@ -324,14 +321,13 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
                 temp_path = str(final_path) + "_temp.mp4"
                 shutil.move(final_path, temp_path)
                 
-                list_path = out_dir / f"hook_concat_{key}.txt"
-                with open(list_path, "w") as f:
-                    f.write(f"file '{hook_path}'\n")
-                    f.write(f"file '{temp_path}'\n")
-                
-                # 必须重新编码而非 stream copy，因为 hook 和主视频的编码参数可能不同
+                # 使用 filter_complex concat 可以完美解决不同视频片段拼接时的帧率/时间基准不一致导致的画面卡死、绿屏和音画不同步问题
                 subprocess.run([
-                    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path),
+                    "ffmpeg", "-y", 
+                    "-i", str(hook_path), 
+                    "-i", str(temp_path),
+                    "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[outv][outa]",
+                    "-map", "[outv]", "-map", "[outa]",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                     "-c:a", "aac", "-b:a", "192k",
                     final_path
