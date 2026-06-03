@@ -116,10 +116,72 @@ def _download_image(url: str, save_path: Path) -> None:
         raise ImageGenError(f"Failed to download image from {url}: {e}") from e
 
 
+class ImageQAError(Exception):
+    pass
+
+def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
+    from config.settings import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+    import base64
+    import anthropic
+    
+    if not ANTHROPIC_API_KEY:
+        logger.warning("[Visual QA] ANTHROPIC_API_KEY not configured, skipping QA.")
+        return
+        
+    try:
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+            
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        system_prompt = """你是一个极其严格的自动化视觉审查员。你的任务是检查生成的 AI 图片是否符合标准。
+如果发现以下任意一项严重违规，必须直接回复以 "REJECT: " 开头的理由。
+如果完全合格，请回复 "PASS"。
+
+【必须拒绝的情况】：
+1. 画面任何角落（特别是右下角、左下角）带有“AI生成”、“无界AI”或类似的中英文字符水印。
+2. 画面的环境/光线与剧本提示词存在严重冲突（例如：提示词要求是“黑夜”、“阴暗病房”，画面却看起来是大白天、阳光明媚）。
+3. 画面主体出现了极其恐怖扭曲的AI结构错误（如三头六臂，极其扭曲的五官）。
+"""
+        
+        user_msg = f"这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查它是否带有水印或严重不符。"
+        
+        response = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=150,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_msg},
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}}
+                    ]
+                }
+            ]
+        )
+        
+        result = response.content[0].text.strip()
+        if result.startswith("REJECT"):
+            raise ImageQAError(result)
+        
+        logger.success("[Visual QA] 质检通过 ✅")
+        
+    except Exception as e:
+        if isinstance(e, ImageQAError):
+            raise e
+        logger.warning(f"[Visual QA] API error, skipping QA check: {e}")
+
 # ──────────────────────────────────────────────────────────
 # 单张生图（完整流程）
 # ──────────────────────────────────────────────────────────
 
+@retry(
+    retry=retry_if_exception_type((ImageGenError, ImageQAError)),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=2, min=5, max=30),
+    reraise=True,
+)
 def generate_single_image(
     scene_index: int,
     visual_prompt: str,
@@ -138,11 +200,24 @@ def generate_single_image(
 
     img_url  = _call_siliconflow_flux(final_prompt, character_ref_url)
     _download_image(img_url, save_path)
+    
+    # 执行 QA
+    logger.info(f"[Visual QA] 正在审核 Scene {scene_index}...")
+    try:
+        _visual_qa_image(save_path, visual_prompt)
+    except ImageQAError as qa_err:
+        logger.error(f"[Visual QA] Scene {scene_index} 质检失败 ❌：{qa_err} (正在销毁重做...)")
+        if save_path.exists():
+            save_path.unlink()
+        import time
+        time.sleep(2)
+        raise qa_err
 
     # 强制休眠 5 秒，防止触发硅基流动免费账户的每分钟请求限制 (RPM)
+    import time
     time.sleep(5)
     
-    logger.success("Scene {} image saved: {}", scene_index, save_path)
+    logger.success("Scene {} image saved and verified: {}", scene_index, save_path)
     return save_path
 
 
