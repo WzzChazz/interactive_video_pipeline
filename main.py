@@ -123,6 +123,7 @@ def stage_scrape(episode: Episode) -> str:
                 db_prev.audience_profile = json.dumps(analytics.get("audience_profile"))
                 db_prev.completion_rate = analytics.get("completion_rate")
                 db_prev.five_sec_retention = analytics.get("five_sec_retention")
+        session.commit()
 
     logger.success(
         "[Stage 1/6] Vote result: A={}, B={} → Branch {} wins.",
@@ -192,6 +193,7 @@ def stage_generate_script(branch: str, episode: Episode) -> dict:
         ep.title        = script_obj.episode_title
         ep.chosen_branch = branch
         ep.status       = EpisodeStatus.PENDING_REVIEW
+        session.commit()
 
     logger.success(
         "[Stage 2/6] Script '{}' generated with {} scenes.",
@@ -241,6 +243,7 @@ def stage_generate_assets(script: dict, episode: Episode) -> dict:
         ep = session.get(Episode, episode.id)
         if ep:
             ep.asset_manifest_json = json.dumps(asset_manifest, ensure_ascii=False)
+            session.commit()
 
     logger.success("[Stage 3-4/6] Assets complete: {} imgs, {} clips, {} audio tracks.",
                    len(image_manifest), len(clip_manifest), len(audio_manifest))
@@ -268,11 +271,14 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
     banner_text = f"第 {ep.episode_number} 集 | {episode_title}" if hasattr(ep, 'episode_number') else f"互动连载 | {episode_title}"
 
     cover_teaser = script_data.get("cover_teaser", "")
+    
+    image_manifest = {int(k): v for k, v in asset_manifest.get("images", {}).items()}
 
     output_paths = compile_video(
         scenes=script_data.get("scenes", []),
         clip_manifest=clip_manifest,
         audio_manifest=audio_manifest,
+        image_manifest=image_manifest,
         episode_tag=episode.episode_tag,
         theme_key=ep.theme_key if hasattr(ep, 'theme_key') else "hospital_horror",
         next_branches=script_data.get("next_branches", {}),
@@ -282,7 +288,6 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
 
     # 生成封面 (Cover Generation) — 优先使用 LLM 标注的最高潮分镜
     episode_title = script_data.get("episode_title", "互动短剧")
-    image_manifest = {int(k): v for k, v in asset_manifest.get("images", {}).items()}
     # 优先选 is_climax=true 的分镜，否则取序号最大的
     scenes_list = script_data.get("scenes", [])
     climax_sc = next((s for s in scenes_list if s.get("is_climax")), None)
@@ -294,7 +299,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
         logger.info("No is_climax scene found, using last scene {}", climax_scene_idx)
     climax_image_path = image_manifest.get(climax_scene_idx)
     if climax_image_path and Path(climax_image_path).exists():
-        from config.settings import STORAGE_OUTPUT_DIR
+        from config.settings import STORAGE_OUTPUT_DIR, VIDEO_WIDTH, VIDEO_HEIGHT
         out_dir = STORAGE_OUTPUT_DIR / episode.episode_tag
         out_dir.mkdir(parents=True, exist_ok=True)
         cover_path = out_dir / f"{episode.episode_tag}_cover.jpg"
@@ -354,6 +359,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
             ep.video_output_path = output_paths.get("douyin")
             ep.video_global_path = output_paths.get("global")
             ep.status            = EpisodeStatus.COMPLETED
+            session.commit()
 
     logger.success("[Stage 5/6] Video compiled: {}", output_paths)
     return output_paths
@@ -461,8 +467,19 @@ def stage_publish(output_paths: dict, episode: Episode, script: dict) -> None:
         if ep:
             ep.status           = EpisodeStatus.PUBLISHED
             ep.published_at     = __import__('datetime').datetime.now()
+            session.commit()
 
     logger.success("[Stage 6/6] Published successfully.")
+
+    import shutil
+    from config.settings import STORAGE_TEMP_DIR
+    temp_dir = STORAGE_TEMP_DIR / episode.episode_tag
+    if temp_dir.exists():
+        try:
+            shutil.rmtree(temp_dir)
+            logger.info(f"Garbage collection: Cleaned up {temp_dir} after successful publish.")
+        except Exception as e:
+            logger.warning(f"Garbage collection failed for {temp_dir}: {e}")
 
 
 # ──────────────────────────────────────────────────────────
@@ -562,6 +579,7 @@ def run_pipeline(theme_key: str = "hospital_horror") -> None:
             with get_session() as session:
                 ep = session.get(Episode, episode.id)
                 ep.status = EpisodeStatus.GENERATING_SCRIPT
+                session.commit()
             script = stage_generate_script(branch, episode)
             logger.warning("Pipeline paused at PENDING_REVIEW. Please approve the script in Dashboard.")
             
@@ -587,6 +605,7 @@ def run_pipeline(theme_key: str = "hospital_horror") -> None:
             if ep:
                 ep.status = EpisodeStatus.FAILED
                 ep.error_message = str(exc)
+                session.commit()
         raise
 
 

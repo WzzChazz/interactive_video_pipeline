@@ -195,8 +195,9 @@ the complete script and storyboard for the next episode. You operate under the "
    - Force a TRANSITION to a completely new or deeper environment.
 
 3. **FACTION BUILDING & RETURN RATE ("LaoTie" Operations Hack)**:
-   - The `next_branches` must be a severe Moral / Survival / Psychological Dilemma with HIGH EMOTIONAL CONFLICT (e.g., Expose the truth violently vs. Run away in fear).
-   - The teasers MUST explicitly tell the audience to vote by typing "1" or "2" in the comments, e.g., "支持林悦反击扣1，支持跑路扣2！"
+   - The `next_branches` must be a severe Moral / Survival / Psychological Dilemma.
+   - You MUST generate separate option strings for Option A and Option B. EACH string MUST represent exactly ONE choice and end with "扣1" (for A) or "扣2" (for B).
+   - For example: douyin_branch_a = "支持林悦反击扣1", douyin_branch_b = "支持跑路扣2". NEVER put both choices in the same string!
 
 ## DRAMA SETTING: {theme['name']}
 - Genre: {theme['genre']}
@@ -235,10 +236,14 @@ the complete script and storyboard for the next episode. You operate under the "
     }
   ],
   "next_branches": {
-    "branch_a_teaser": "string (Chinese, ≤200 chars)",
-    "branch_b_teaser": "string (Chinese, ≤200 chars)",
-    "english_branch_a_teaser": "string (English)",
-    "english_branch_b_teaser": "string (English)"
+    "douyin_branch_a": "string (抖音版选项A：极端理性/引战，以'扣1'结尾，≤50字)",
+    "douyin_branch_b": "string (抖音版选项B：圣母底线/妥协，以'扣2'结尾，≤50字)",
+    "kuaishou_branch_a": "string (快手版选项A：兄弟情义/煽情，以'扣1'结尾，≤50字)",
+    "kuaishou_branch_b": "string (快手版选项B：生死抉择/独狼，以'扣2'结尾，≤50字)",
+    "english_branch_a_teaser": "string (Global Option A, ends with 'press 1')",
+    "english_branch_b_teaser": "string (Global Option B, ends with 'press 2')",
+    "branch_a_teaser": "string (通用选项A，以'扣1'结尾，≤50字)",
+    "branch_b_teaser": "string (通用选项B，以'扣2'结尾，≤50字)"
   }
 }
 """).strip()
@@ -428,7 +433,7 @@ def _build_user_prompt(
         "要求：",
         "- 10-12 个分镜（scenes），每个分镜 5 秒视频。必须严格保证！",
         "- 剧情要有明显的情感冲突和反转，结尾留悬念。",
-        "- next_branches 必须严格区分平台：抖音版必须是“极端理性 vs 圣母底线”的道德困境（引战）；快手版必须是“兄弟情义 vs 生死抉择”的热血困境（煽情）。绝对不能是简单的开门关门！",
+        "- next_branches 必须严格区分平台：必须分别提供 douyin_branch_a/b 和 kuaishou_branch_a/b。抖音版要求“极端理性 vs 圣母底线”（引战）；快手版要求“兄弟情义 vs 生死抉择”（煽情）。每个选项字符串只能包含一个选择，并以“扣1”或“扣2”结尾！",
         "- 每集必须有且仅有 1 个分镜的 is_climax 字段设为 true，选择剧情最高潮、最具视觉冲击力的画面（例如：突然揭露真相、激烈对抗、极度惊恐的瞬间），该分镜将被用于生成视频封面缩略图。",
         "- 严格遵守输出格式：纯 JSON，不含任何其他文字。",
     ]

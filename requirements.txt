@@ -11,6 +11,7 @@ httpx>=0.27.0              # 异步 HTTP（并行资产生成）
 
 # --- 数据验证与序列化 ---
 pydantic>=2.7.0            # LLM JSON 输出强校验
+pydantic-settings>=2.2.0   # 强类型配置管理
 python-dotenv>=1.0.0       # 从 .env 文件加载密钥
 
 # --- 数据库 ORM ---

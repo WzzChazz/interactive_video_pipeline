@@ -10,11 +10,13 @@ core/pipeline_engine.py — 全自动视听合成流水线的主控引擎 (JSON 
 import json
 from loguru import logger
 from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class VideoPipelineEngine:
-    def __init__(self, episode_script: dict, episode_tag: str):
+    def __init__(self, episode_script: dict, episode_tag: str, clip_manifest: dict = None):
         self.raw_script = episode_script
         self.episode_tag = episode_tag
+        self.clip_manifest = clip_manifest or {}
         self.pipeline_schema = self._parse_to_schema()
 
     def _parse_to_schema(self) -> List[Dict]:
@@ -31,15 +33,20 @@ class VideoPipelineEngine:
                 sfx_list = [p.strip().replace(" ", "_").lower() for p in sfx_raw.split(",")]
                 sfx_list = [s for s in sfx_list if s][:3]
 
+            scene_id = scene.get("scene_index", idx + 1)
+            # 动态绑定真实视频源，兼容字典回退
+            video_source = self.clip_manifest.get(scene_id)
+            if not video_source:
+                video_source = f"./storage/temp/{self.episode_tag}/clips/scene_{scene_id:02d}.mp4"
+
             node = {
-                "scene_id": scene.get("scene_index", idx + 1),
+                "scene_id": scene_id,
                 "role": scene.get("character", scene.get("speaker", "")),
                 "text": scene.get("dialogue", ""),
                 "emotion": scene.get("emotion", "neutral").lower(),
                 "sfx": sfx_list,
                 "action_timestamp": float(scene.get("action_timestamp", 0.0)),
-                # 预设视频原素材的相对路径
-                "video_source": f"./storage/temp/{self.episode_tag}/images/scene_{scene.get('scene_index', idx+1):02d}.mp4"
+                "video_source": video_source
             }
             schema.append(node)
             
@@ -47,70 +54,86 @@ class VideoPipelineEngine:
         return schema
 
     def execute_pipeline(self):
-        """执行全自动流水线的主入口"""
+        """
+        重构后的全自动流水线主入口：纯资产调度 + 移交全局渲染。
+        彻底解决“音效投毒Wav2Lip”与“串行性能瓶颈”问题。
+        """
         logger.info(f"=== Starting Auto-Video Pipeline for {self.episode_tag} ===")
         
-        # 延迟导入以防止循环依赖
         from core.tts_engine import DynamicTTSEngine
-        from core.sfx_mixer import SFXMixer
-        from core.lip_sync_engine import LipSyncEngine
-        from core.ffmpeg_renderer import FFmpegRenderer
+        from core.ffmpeg_compiler import compile_video
         from pathlib import Path
+        import os
         
         tts = DynamicTTSEngine()
-        mixer = SFXMixer()
-        lipsync = LipSyncEngine()
-        renderer = FFmpegRenderer(work_dir=f"./storage/temp/{self.episode_tag}/render")
         
-        final_video_paths = []
+        # 定义资产清单 (Manifests) 传给下游工业渲染器
+        clip_manifest = {}
+        audio_manifest = {}
+        image_manifest = {} # 如果有封面需求，把图片路径塞进这里
+        
+        # 1. 生成基础资产 (TTS) 并构建清单
+        logger.info("--- Step 1: Preparing Assets (TTS & Paths) ---")
         
         for scene in self.pipeline_schema:
             idx = scene['scene_id']
-            logger.info(f"--- Processing Scene {idx} ---")
+            logger.info(f"Preparing assets for Scene {idx}...")
             
-            # 1. 动态生成情感 TTS
+            # 1.1 生成纯净干声 (干声才能喂给 Wav2Lip，绝不能混入 SFX)
             raw_voice_path = Path(f"./storage/temp/{self.episode_tag}/audio/raw_scene_{idx:02d}.wav")
-            if scene['text']:
-                tts.generate(scene['role'], scene['emotion'], scene['text'], raw_voice_path)
-            else:
-                raw_voice_path = None
-                logger.info(f"[Pipeline] Scene {idx} is a Reaction Shot (No dialogue). Skipping TTS.")
-            
-            # 2. 混合音频与音效 (精确锚点打点)
-            mixed_audio_path = Path(f"./storage/temp/{self.episode_tag}/audio/mixed_scene_{idx:02d}.aac")
-            mixer.mix_scene_audio(
-                voice_path=str(raw_voice_path) if raw_voice_path else None,
-                sfx_names=scene['sfx'],
-                action_timestamp=scene['action_timestamp'],
-                output_path=str(mixed_audio_path)
-            )
-            
-            # 3. 本地面部驱动与高清修复
-            lipsync_video_path = Path(f"./storage/temp/{self.episode_tag}/video/lipsync_scene_{idx:02d}.mp4")
-            lipsync_video_path.parent.mkdir(parents=True, exist_ok=True)
+            raw_voice_path.parent.mkdir(parents=True, exist_ok=True)
             
             if scene['text']:
-                lipsync.generate_talking_head(
-                    video_source=scene['video_source'],
-                    audio_source=str(mixed_audio_path),
-                    final_out=str(lipsync_video_path)
-                )
-                bypassed_video = str(lipsync_video_path)
+                try:
+                    tts.generate(scene['role'], scene['emotion'], scene['text'], raw_voice_path)
+                    voice_str = str(raw_voice_path)
+                except Exception as e:
+                    logger.error(f"[Pipeline] TTS generation failed for Scene {idx}: {e}. Falling back to empty voice.")
+                    voice_str = ""
             else:
-                logger.info(f"[Pipeline] Scene {idx} bypassing LipSync to preserve raw visual terror.")
-                bypassed_video = scene['video_source']
+                voice_str = ""
+                logger.info(f"[Pipeline] Scene {idx} has no dialogue, leaving voice path empty.")
             
-            # 4. 压制最终成片 (包含冻结帧与字幕硬编码)
-            final_scene_path = Path(f"./storage/temp/{self.episode_tag}/render/final_scene_{idx:02d}.mp4")
-            renderer.render_scene(
-                video_path=str(bypassed_video),
-                mixed_audio_path=str(mixed_audio_path),
-                dialogue_text=scene['text'],
-                output_path=str(final_scene_path)
+            # 1.2 匹配音效路径 (请根据你原本的逻辑获取具体的音效文件路径)
+            # 这里简单占位，例如：sfx_path = resolve_sfx_path(scene['sfx'])
+            sfx_path = scene['sfx'] 
+            
+            # 1.3 修复致命硬编码：确保 video_source 是从实际的 clips 目录读取，而不是 images
+            # 你的 video_gen.py 生成在 clips 文件夹，这里必须对应
+            correct_video_source = str(Path(f"./storage/temp/{self.episode_tag}/clips/scene_{idx:02d}.mp4"))
+            
+            # 1.4 写入数据清单
+            clip_manifest[idx] = correct_video_source
+            audio_manifest[idx] = {
+                "voice": voice_str,  # 只有纯净人声会被送到 Wav2Lip
+                "sfx": sfx_path      # 音效会在后期 ffmpeg_compiler 里被安全混合
+            }
+        
+        # 2. 移交工业级渲染器 (统一合并、打口型、侧链压缩混音)
+        logger.info("--- Step 2: Handing over to Industrial FFmpeg Compiler ---")
+        
+        try:
+            # 组装分支数据 (如果有)
+            next_branches = {
+                "branch_a_teaser": self.raw_script.get("branch_a", ""),
+                "branch_b_teaser": self.raw_script.get("branch_b", "")
+            }
+            
+            # 直接调用你写好的神器
+            final_video_paths = compile_video(
+                scenes=self.raw_script.get("scenes", []),
+                clip_manifest=clip_manifest,
+                audio_manifest=audio_manifest,
+                image_manifest=image_manifest,
+                episode_tag=self.episode_tag,
+                theme_key="hospital_horror",  # 或者根据剧本动态读取
+                render_mode="all",            # 抖音/快手/全球三轨齐发
+                next_branches=next_branches,
+                banner_text=self.raw_script.get("title", "")
             )
+            logger.success(f"=== Pipeline COMPLETED! Outputs: {final_video_paths} ===")
+            return list(final_video_paths.values())
             
-            final_video_paths.append(str(final_scene_path))
-            logger.success(f"Scene {idx} completed successfully!")
-            
-        logger.success(f"=== Pipeline completed for all {len(final_video_paths)} scenes! ===")
-        return final_video_paths
+        except Exception as e:
+            logger.error(f"FFmpeg Compilation failed: {e}")
+            raise

@@ -7,123 +7,119 @@ config/settings.py
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 # ── 项目根目录 ─────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# 优先加载同级 .env 文件（开发本地覆盖）
-load_dotenv(BASE_DIR / ".env", override=True)
+class AppSettings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=str(BASE_DIR / ".env"), 
+        env_file_encoding='utf-8', 
+        extra='ignore'
+    )
+
+    # 1. 数据库
+    DATABASE_URL: str = f"sqlite:///{BASE_DIR / 'storage' / 'pipeline.db'}"
+
+    # 2. LLM 配置
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20241022"
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    DEEPSEEK_MODEL: str = "deepseek-reasoner"
+
+    # 3. 视觉生图
+    FLUX_API_KEY: str = ""
+    FLUX_API_URL: str = "https://api.siliconflow.cn/v1/images/generations"
+    USE_LIPSYNC: bool = False
+    MIDJOURNEY_API_KEY: str = ""
+
+    # 4. 图生视频
+    KLING_API_KEY: str = ""
+    KLING_API_URL: str = "https://api-beijing.klingai.com/v1"
+    RUNWAY_API_KEY: str = ""
+    RUNWAY_API_URL: str = "https://api.dev.runwayml.com/v1"
+    HAILUO_API_KEY: str = ""
+    HAILUO_API_URL: str = "https://api.minimax.io/v1"
+    ZHIPU_API_KEY: str = ""
+    VIDEO_PROVIDER: str = "zhipu"  # "kling" | "runway" | "hailuo" | "zhipu"
+
+    # 5. 音频合成
+    USE_ELEVENLABS_SFX: bool = False
+    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_VOICE_ID: str = ""
+    ELEVENLABS_MODEL_ID: str = "eleven_turbo_v2_5"
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_VOICE_ID: str = "cosyvoice-v3.5-plus-vd-bailian-f0f1b1bb3679400486ad031fc8bd2bed"
+    DASHSCOPE_NARRATOR_VOICE_ID: str = "longlaotie"
+
+    # 6. 浏览器自动化（DrissionPage）
+    BROWSER_USER_DATA_DIR: str = str(BASE_DIR / "storage" / "browser_profile")
+    BROWSER_HEADLESS: bool = False
+    DOUYIN_TARGET_VIDEO_URL: str = ""
+    DOUYIN_CREATOR_URL: str = "https://creator.douyin.com/creator-micro/content/upload"
+
+    # 8. 流水线全局参数
+    MAX_WORKERS: int = Field(default=4, ge=1)
+    API_MAX_RETRIES: int = Field(default=3, ge=1)
+    CLIP_DURATION_SECONDS: int = 5
+    VIDEO_WIDTH: int = 1080
+    VIDEO_HEIGHT: int = 1920
+    SUBTITLE_FONT_PATH: str = "/System/Library/Fonts/PingFang.ttc"
+    DAILY_RUN_TIME: str = "08:00"
+    
+    # 自动化发布设置
+    PAUSE_BEFORE_PUBLISH: bool = False
 
 
-# ──────────────────────────────────────────────────────────
-# 1. 数据库
-# ──────────────────────────────────────────────────────────
-DATABASE_URL: str = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{BASE_DIR / 'storage' / 'pipeline.db'}"
-)
+# 实例化强类型配置对象
+_cfg = AppSettings()
 
-# ──────────────────────────────────────────────────────────
-# 2. LLM 配置
-# ──────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+# 导出为模块变量（保持完全向后兼容）
+DATABASE_URL = _cfg.DATABASE_URL
+ANTHROPIC_API_KEY = _cfg.ANTHROPIC_API_KEY
+ANTHROPIC_MODEL = _cfg.ANTHROPIC_MODEL
+DEEPSEEK_API_KEY = _cfg.DEEPSEEK_API_KEY
+DEEPSEEK_BASE_URL = _cfg.DEEPSEEK_BASE_URL
+DEEPSEEK_MODEL = _cfg.DEEPSEEK_MODEL
+FLUX_API_KEY = _cfg.FLUX_API_KEY
+FLUX_API_URL = _cfg.FLUX_API_URL
+USE_LIPSYNC = _cfg.USE_LIPSYNC
+MIDJOURNEY_API_KEY = _cfg.MIDJOURNEY_API_KEY
+KLING_API_KEY = _cfg.KLING_API_KEY
+KLING_API_URL = _cfg.KLING_API_URL
+RUNWAY_API_KEY = _cfg.RUNWAY_API_KEY
+RUNWAY_API_URL = _cfg.RUNWAY_API_URL
+HAILUO_API_KEY = _cfg.HAILUO_API_KEY
+HAILUO_API_URL = _cfg.HAILUO_API_URL
+ZHIPU_API_KEY = _cfg.ZHIPU_API_KEY
+VIDEO_PROVIDER = _cfg.VIDEO_PROVIDER
+USE_ELEVENLABS_SFX = _cfg.USE_ELEVENLABS_SFX
+ELEVENLABS_API_KEY = _cfg.ELEVENLABS_API_KEY
+ELEVENLABS_VOICE_ID = _cfg.ELEVENLABS_VOICE_ID
+ELEVENLABS_MODEL_ID = _cfg.ELEVENLABS_MODEL_ID
+DASHSCOPE_API_KEY = _cfg.DASHSCOPE_API_KEY
+DASHSCOPE_VOICE_ID = _cfg.DASHSCOPE_VOICE_ID
+DASHSCOPE_NARRATOR_VOICE_ID = _cfg.DASHSCOPE_NARRATOR_VOICE_ID
+BROWSER_USER_DATA_DIR = _cfg.BROWSER_USER_DATA_DIR
+BROWSER_HEADLESS = _cfg.BROWSER_HEADLESS
+DOUYIN_TARGET_VIDEO_URL = _cfg.DOUYIN_TARGET_VIDEO_URL
+DOUYIN_CREATOR_URL = _cfg.DOUYIN_CREATOR_URL
+MAX_WORKERS = _cfg.MAX_WORKERS
+API_MAX_RETRIES = _cfg.API_MAX_RETRIES
+CLIP_DURATION_SECONDS = _cfg.CLIP_DURATION_SECONDS
+VIDEO_WIDTH = _cfg.VIDEO_WIDTH
+VIDEO_HEIGHT = _cfg.VIDEO_HEIGHT
+SUBTITLE_FONT_PATH = _cfg.SUBTITLE_FONT_PATH
+DAILY_RUN_TIME = _cfg.DAILY_RUN_TIME
+PAUSE_BEFORE_PUBLISH = _cfg.PAUSE_BEFORE_PUBLISH
 
-DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner")
-
-# ──────────────────────────────────────────────────────────
-# 3. 视觉生图
-# ──────────────────────────────────────────────────────────
-FLUX_API_KEY: str = os.getenv("FLUX_API_KEY", "")
-FLUX_API_URL: str = os.getenv("FLUX_API_URL", "https://api.siliconflow.cn/v1/images/generations")
-USE_LIPSYNC: bool = os.getenv("USE_LIPSYNC", "false").lower() == "true"
-
-MIDJOURNEY_API_KEY: str = os.getenv("MIDJOURNEY_API_KEY", "")
-
-# ──────────────────────────────────────────────────────────
-# 4. 图生视频
-# ──────────────────────────────────────────────────────────
-KLING_API_KEY: str = os.getenv("KLING_API_KEY", "")
-KLING_API_URL: str = os.getenv("KLING_API_URL", "https://api-beijing.klingai.com/v1")
-
-RUNWAY_API_KEY: str = os.getenv("RUNWAY_API_KEY", "")
-RUNWAY_API_URL: str = os.getenv("RUNWAY_API_URL", "https://api.dev.runwayml.com/v1")
-
-HAILUO_API_KEY: str = os.getenv("HAILUO_API_KEY", "")
-HAILUO_API_URL: str = os.getenv("HAILUO_API_URL", "https://api.minimax.io/v1")
-
-ZHIPU_API_KEY: str = os.getenv("ZHIPU_API_KEY", "")
-
-# 默认优先使用 Zhipu 
-VIDEO_PROVIDER: str = os.getenv("VIDEO_PROVIDER", "zhipu")  # "kling" | "runway" | "hailuo" | "zhipu"
-
-# ──────────────────────────────────────────────────────────
-# 5. 音频合成
-# ──────────────────────────────────────────────────────────
-USE_ELEVENLABS_SFX: bool = os.getenv("USE_ELEVENLABS_SFX", "false").lower() == "true"
-ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
-ELEVENLABS_VOICE_ID: str = os.getenv("ELEVENLABS_VOICE_ID", "")      # 音效/备用声音 ID
-ELEVENLABS_MODEL_ID: str = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
-
-DASHSCOPE_API_KEY: str = os.getenv("DASHSCOPE_API_KEY", "")
-DASHSCOPE_VOICE_ID: str = os.getenv("DASHSCOPE_VOICE_ID", "cosyvoice-v3.5-plus-vd-bailian-f0f1b1bb3679400486ad031fc8bd2bed") # 主人公：用户定制的专属清冷悬疑青年音
-DASHSCOPE_NARRATOR_VOICE_ID: str = os.getenv("DASHSCOPE_NARRATOR_VOICE_ID", "longlaotie") # 旁白：默认成熟低沉男声 (龙老铁)
-
-# ──────────────────────────────────────────────────────────
-# 6. 浏览器自动化（DrissionPage）
-# ──────────────────────────────────────────────────────────
-# 持久化 Chrome User Data 目录，用于保持抖音登录 Session
-BROWSER_USER_DATA_DIR: str = os.getenv(
-    "BROWSER_USER_DATA_DIR",
-    str(BASE_DIR / "storage" / "browser_profile")
-)
-BROWSER_HEADLESS: bool = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
-
-# 目标抖音视频 URL（上一集，用于抓取投票评论）
-DOUYIN_TARGET_VIDEO_URL: str = os.getenv("DOUYIN_TARGET_VIDEO_URL", "")
-# 抖音创作者中心上传入口
-DOUYIN_CREATOR_URL: str = "https://creator.douyin.com/creator-micro/content/upload"
-
-# ──────────────────────────────────────────────────────────
 # 7. 存储路径
-# ──────────────────────────────────────────────────────────
 STORAGE_TEMP_DIR: Path = BASE_DIR / "storage" / "temp"
 STORAGE_OUTPUT_DIR: Path = BASE_DIR / "storage" / "outputs"
 
 # 确保目录存在
 STORAGE_TEMP_DIR.mkdir(parents=True, exist_ok=True)
 STORAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# ──────────────────────────────────────────────────────────
-# 8. 流水线全局参数
-# ──────────────────────────────────────────────────────────
-# 并行生成资产时的最大线程数
-MAX_WORKERS: int = int(os.getenv("MAX_WORKERS", "4"))
-
-# API 调用最大重试次数（tenacity 使用）
-API_MAX_RETRIES: int = int(os.getenv("API_MAX_RETRIES", "3"))
-
-# 单个视频片段时长（秒）
-CLIP_DURATION_SECONDS: int = int(os.getenv("CLIP_DURATION_SECONDS", "5"))
-
-# 视频输出分辨率
-VIDEO_WIDTH: int = int(os.getenv("VIDEO_WIDTH", "1080"))
-VIDEO_HEIGHT: int = int(os.getenv("VIDEO_HEIGHT", "1920"))  # 竖屏 9:16
-
-# 字幕字体路径（请替换为系统中实际存在的字体）
-SUBTITLE_FONT_PATH: str = os.getenv(
-    "SUBTITLE_FONT_PATH",
-    "/System/Library/Fonts/PingFang.ttc"  # macOS 默认中文字体
-)
-
-# 每日任务执行时间（24h 格式，例如 "08:00"）
-DAILY_RUN_TIME: str = os.getenv("DAILY_RUN_TIME", "08:00")
-
-# ──────────────────────────────────────────────────────────
-# 8. 自动化发布设置
-# ──────────────────────────────────────────────────────────
-BROWSER_HEADLESS: bool = False
-PAUSE_BEFORE_PUBLISH: bool = os.getenv("PAUSE_BEFORE_PUBLISH", "false").lower() == "true"

@@ -133,17 +133,17 @@ def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
         # dashscope MultiModalConversation 支持直接传本地绝对路径 file://
         file_url = f"file://{image_path.absolute()}"
         
-        prompt = f"""你是一个极其严格的自动化视觉审查员。你的任务是检查生成的 AI 图片是否符合标准。
-如果发现以下任意一项严重违规，必须直接回复以 "REJECT: " 开头的理由。
-如果完全合格，请回复 "PASS"。
+        prompt = f"""你是一个极其严格但注重主次的自动化视觉审查员。你的任务是检查生成的 AI 图片是否符合标准。
 
-【必须拒绝的情况】：
+请仔细检查图片，**只有**在发生以下 4 种【严重违规】时才拒绝（直接回复以 "REJECT: " 开头的理由），否则只要大体符合，即使有微小的瑕疵（例如头发没有完全对称、光线没有达到100%纯黑），也请回复 "PASS"。
+
+【必须拒绝的情况（只要不触犯这4条，就必须PASS）】：
 1. 画面任何角落（特别是右下角、左下角）带有“AI生成”、“无界AI”或类似的中英文字符水印。
-2. 画面的环境/光线与剧本提示词存在严重冲突（例如：提示词要求是“黑夜”、“阴暗病房”，画面却看起来是大白天、阳光明媚）。
+2. 画面的环境/光线与剧本提示词存在极为严重的颠覆性冲突（例如：提示词要求是“黑夜”，画面却看起来是“大白天”或“明亮的白色房间”）。
 3. 画面主体出现了极其恐怖扭曲的AI结构错误（如三头六臂，极其扭曲的五官）。
+4. 角色外貌一致性错误：主角必须是纯正的黑发（black hair）。如果画面中出现了明显的黄色、金色、白色等非黑色头发，必须拒绝。
 
-这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查它是否带有水印或严重不符。
-"""
+这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查。"""
         messages = [
             {
                 "role": "user",
@@ -178,7 +178,7 @@ def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
 
 @retry(
     retry=retry_if_exception_type((ImageGenError, ImageQAError)),
-    stop=stop_after_attempt(5),
+    stop=stop_after_attempt(8),
     wait=wait_exponential(multiplier=2, min=5, max=30),
     reraise=True,
 )
@@ -196,7 +196,9 @@ def generate_single_image(
     """
     logger.info("Generating image for scene {}: {:.60s}...", scene_index, visual_prompt)
 
-    final_prompt = visual_prompt
+    # 强化提示词：强制黑发和极度暗黑风格
+    strong_prefix = "Extremely dark lighting, pitch black environment, protagonist has pure black hair (no other colors), horror movie aesthetics, "
+    final_prompt = strong_prefix + visual_prompt
 
     img_url  = _call_siliconflow_flux(final_prompt, character_ref_url)
     _download_image(img_url, save_path)

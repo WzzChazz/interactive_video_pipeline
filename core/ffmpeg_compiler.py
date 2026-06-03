@@ -237,11 +237,11 @@ def _concat_video_clips(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "18",
-        "-vf", f"eq=brightness=-0.28:contrast=1.35:saturation=0.55,"
-               f"curves=red='0/0 1/0.82':blue='0/0.05 1/1.0',"
+        "-vf", f"crop=iw*0.9:ih*0.9:(iw-ow)/2:(ih-oh)/2,"
+               f"eq=brightness=-0.05:contrast=1.15:saturation=0.7,"
+               f"curves=red='0/0 1/0.9':blue='0/0.05 1/1.0',"
                f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
-               f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-               f"drawbox=x=w-310:y=h-115:w=310:h=115:color=black:t=fill",
+               f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black",
         "-an",
         str(output_path),
     ], step_name="concat_clips")
@@ -271,7 +271,7 @@ def _build_audio_track(
     silence_path = tmp_dir / "silence.mp3"
     _run_ffmpeg([
         "-f", "lavfi",
-        "-i", f"anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-i", f"anullsrc=channel_layout=stereo:sample_rate=48000",
         "-t", str(total_duration),
         str(silence_path),
     ], step_name="gen_silence")
@@ -375,7 +375,7 @@ def _build_audio_track(
         input_args + [
             "-filter_complex", filter_complex,
             "-map", "[aout]",
-            "-ar", "44100",
+            "-ar", "48000",
             "-ac", "2",
             "-b:a", "192k",
             str(output_path),
@@ -398,6 +398,7 @@ def _mux_final_video(
     next_branches: dict = None,
     banner_text: str = "",
     platform: str = "douyin",
+    last_image_path: Optional[str] = None
 ) -> Path:
     """将拼接好的视频与混音轨、字幕进行最终封装，并叠加双轨专属特效。"""
     
@@ -474,7 +475,7 @@ def _mux_final_video(
     if audio_path and audio_path.exists():
         pitch_shift = random.uniform(1.001, 1.005)
         output_args += [
-            "-af", f"asetrate=44100*{pitch_shift},aresample=44100",
+            "-af", f"asetrate=48000*{pitch_shift},aresample=48000",
             "-c:a", "aac",
             "-b:a", "192k",
             "-map", "0:v",
@@ -490,8 +491,36 @@ def _mux_final_video(
     # 2. 如果存在分支，则生成独立打字机片尾并拼接
     if branch_a and branch_b:
         from core.endcard_generator import generate_typewriter_endcard
+        
+        # 【核心修复】：动态从刚生成的主视频末尾截取一帧作为片尾底图
+        extracted_bg = output_path.with_name(f"extracted_bg_{platform}.jpg")
+        try:
+            # -sseof -0.5 表示截取视频倒数第 0.5 秒的画面，保证绝对是视频最后一幕的脸
+            _run_ffmpeg([
+                "-sseof", "-0.5",
+                "-i", str(video_path),
+                "-frames:v", "1",
+                "-update", "1",
+                "-y",
+                str(extracted_bg)
+            ], step_name="extract_last_frame")
+            actual_bg_path = str(extracted_bg)
+        except Exception as e:
+            logger.warning(f"无法提取主视频尾帧: {e}，将回退使用默认/备用图")
+            actual_bg_path = last_image_path
+
         tmp_endcard = output_path.with_name(f"tmp_endcard_{platform}.mp4")
-        generate_typewriter_endcard(branch_a, branch_b, tmp_endcard, fps=30, duration_sec=6.0, chars_per_sec=12.0)
+        
+        # 将真实截屏路径传入打字机引擎
+        generate_typewriter_endcard(
+            branch_a, 
+            branch_b, 
+            tmp_endcard, 
+            fps=30, 
+            duration_sec=6.0, 
+            chars_per_sec=12.0, 
+            background_image_path=actual_bg_path 
+        )
         
         # 拼接
         concat_list = output_path.with_name(f"concat_list_final_{platform}.txt")
@@ -512,6 +541,7 @@ def _mux_final_video(
         # 清理
         tmp_main.unlink(missing_ok=True)
         tmp_endcard.unlink(missing_ok=True)
+        extracted_bg.unlink(missing_ok=True) # 清理截图
         concat_list.unlink(missing_ok=True)
     else:
         # 如果没有分支，直接重命名
@@ -528,6 +558,7 @@ def compile_video(
     scenes: list[dict],
     clip_manifest: dict[int, str],
     audio_manifest: dict[int, dict[str, str]],
+    image_manifest: dict[int, str],
     episode_tag: str,
     theme_key: str = "hospital_horror",
     render_mode: Literal["all", "douyin_only", "kuaishou_only", "global_only"] = "all",
@@ -585,6 +616,12 @@ def compile_video(
                 clip_manifest[-1] = str(cold_open_path)
                 audio_manifest[-1] = {"sfx": ""} 
                 logger.info("Cold-Open flash-forward inserted successfully.")
+
+        last_image_path = None
+        if sorted_scenes:
+            last_scene_idx = sorted_scenes[-1]["scene_index"]
+            last_image_path = image_manifest.get(last_scene_idx)
+            logger.info(f"[DEBUG] last_scene_idx={last_scene_idx}, image_manifest keys={list(image_manifest.keys())}, last_image_path={last_image_path}")
 
         clip_paths = []
         scene_durations = []
@@ -657,12 +694,12 @@ def compile_video(
         
         if render_mode in ("all", "douyin_only"):
             final_douyin = out_dir / f"{episode_tag}_douyin.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin")
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin", last_image_path=last_image_path)
             result_paths["douyin"] = str(final_douyin)
             
         if render_mode in ("all", "kuaishou_only"):
             final_ks = out_dir / f"{episode_tag}_kuaishou.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou")
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou", last_image_path=last_image_path)
             result_paths["kuaishou"] = str(final_ks)
             
         if render_mode in ("all", "global_only"):
@@ -672,7 +709,7 @@ def compile_video(
                 f.write(srt_en_content)
 
             final_global = out_dir / f"{episode_tag}_global.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global")
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global", last_image_path=last_image_path)
             result_paths["global"] = str(final_global)
 
     logger.success("FFmpeg Compilation COMPLETED: {}", result_paths)

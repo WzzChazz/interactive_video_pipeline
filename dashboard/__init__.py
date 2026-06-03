@@ -304,6 +304,7 @@ def _run_publish_task(episode_id: int):
                 ep.status = EpisodeStatus.FAILED
                 ep.error_stage = "publish"
                 ep.error_message = str(e)
+                session.commit()
 
 
 # ──────────────────────────────────────────────────────────
@@ -341,6 +342,7 @@ def _run_pipeline_task(branch_override: Optional[str]):
                 e = session.get(Episode, ep.id)
                 if e:
                     e.chosen_branch = branch_override
+                    session.commit()
         run_pipeline()
     finally:
         _pipeline_running = False

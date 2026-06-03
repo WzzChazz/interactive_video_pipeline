@@ -103,7 +103,6 @@ def get_session() -> Generator[Session, None, None]:
     session: Session = _SessionFactory()
     try:
         yield session
-        session.commit()
     except Exception as exc:
         session.rollback()
         logger.error("Database session rolled back due to: {}", exc)

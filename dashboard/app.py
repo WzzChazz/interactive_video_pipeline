@@ -169,6 +169,7 @@ def retry_episode(eid: int):
         ep.error_stage = None
         ep.error_message = None
         ep.retry_count += 1
+        session.commit()
     return {"ok": True, "message": f"Episode {eid} reset to VOTING."}
 
 
@@ -183,6 +184,7 @@ def override_branch(eid: int, body: BranchOverride):
         ep.chosen_branch = body.branch
         if ep.status == EpisodeStatus.FAILED:
             ep.status = EpisodeStatus.VOTING
+        session.commit()
     return {"ok": True, "message": f"Branch forced to {body.branch}"}
 
 
@@ -196,6 +198,7 @@ def approve_review(eid: int, background_tasks: BackgroundTasks):
         if ep.status != EpisodeStatus.PENDING_REVIEW:
             raise HTTPException(400, f"Must be PENDING_REVIEW. Current: {ep.status.value}")
         ep.status = EpisodeStatus.GENERATING_ASSETS
+        session.commit()
     
     # 自动恢复流水线运行
     global _pipeline_running
@@ -238,6 +241,7 @@ def _publish_task(eid: int):
                 ep.status = EpisodeStatus.FAILED
                 ep.error_stage = "publish"
                 ep.error_message = str(e)
+                session.commit()
 
 
 # ── Pipeline control ───────────────────────────────────────
@@ -272,6 +276,7 @@ def _pipeline_task(branch_override: Optional[str]):
                 e = session.get(Episode, ep.id)
                 if e:
                     e.chosen_branch = branch_override
+                    session.commit()
         run_pipeline()
     finally:
         _pipeline_running = False

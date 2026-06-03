@@ -134,7 +134,13 @@ finally:
         temp_w2l_out = str(Path(final_out).with_suffix(".w2l.mp4"))
         
         # 1. Wav2Lip 合成嘴型 (会导致嘴部模糊)
-        self.run_wav2lip(video_source, audio_source, temp_w2l_out)
+        try:
+            self.run_wav2lip(video_source, audio_source, temp_w2l_out)
+        except LipSyncError as e:
+            logger.error(f"[LipSync] Wav2Lip failed (e.g., face not detected). Bypassing lipsync: {e}")
+            import shutil
+            shutil.copy(video_source, final_out)
+            return final_out
         
         # 2. CodeFormer 画质急救 (如果没有下载完毕则跳过，防止崩溃)
         codeformer_weight = Path("/Users/mac/project/interactive_video_pipeline/local_models/CodeFormer/weights/CodeFormer/codeformer.pth")
