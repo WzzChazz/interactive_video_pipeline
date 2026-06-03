@@ -237,10 +237,11 @@ def _concat_video_clips(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "18",
-        "-vf", f"eq=brightness=-0.15:contrast=1.2:saturation=0.8,"
+        "-vf", f"eq=brightness=-0.28:contrast=1.35:saturation=0.55,"
+               f"curves=red='0/0 1/0.82':blue='0/0.05 1/1.0',"
                f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
                f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
-               f"drawbox=x=w-200:y=h-70:w=200:h=70:color=black:t=fill",
+               f"drawbox=x=w-310:y=h-115:w=310:h=115:color=black:t=fill",
         "-an",
         str(output_path),
     ], step_name="concat_clips")

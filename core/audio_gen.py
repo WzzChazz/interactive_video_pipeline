@@ -29,15 +29,23 @@ import subprocess
 import hashlib
 
 VOICE_ROUTER = {
-    "旁白": "zh-CN-YunxiNeural",       # 男声，稳重阳光
+    # 小劇固定角色（女）
+    "林悦": "zh-CN-XiaoxiaoNeural",      # 女主角，爹美女声
+    "克隆": "zh-CN-XiaohanNeural",       # 克隆体，欄櫥牢冷女声
+    "护士": "zh-CN-XiaoxiaoNeural",       # 甜美年轻女声
+    "女人": "zh-CN-XiaoyiNeural",         # 通用女声
+    "她": "zh-CN-XiaoxiaoNeural",
+    "女": "zh-CN-XiaoxiaoNeural",
+    "小女孩": "zh-CN-XiaoyiNeural",      # 活泣女声，适合女童
+    "助手": "zh-CN-XiaochenNeural",      # 助理女声
+    # 小剧固定角色（男）
+    "旁白": "zh-CN-YunxiNeural",          # 男声，稳重阳光
     "主角": "zh-CN-YunxiNeural",
-    "医生": "zh-CN-YunyangNeural",     # 新闻播音男声，适合沉稳大叔
-    "警察": "zh-CN-YunjianNeural",     # 低沉男声，适合悬疑
-    "护士": "zh-CN-XiaoxiaoNeural",    # 甜美年轻女声
-    "小女孩": "zh-CN-XiaoyiNeural",    # 活泼女声，适合女童
+    "医生": "zh-CN-YunyangNeural",         # 新闻播音男声，适合沉稳大叔
+    "警察": "zh-CN-YunjianNeural",        # 低沉男声，适合悬疑
     "神秘人": "zh-CN-YunjianNeural",   # 借用低沉男声替代沙哑
     "反派": "zh-CN-YunjianNeural",
-    "DEFAULT": "zh-CN-YunxiNeural"
+    "DEFAULT": "zh-CN-XiaoxiaoNeural"         # 默认女声（悉悧悬疑小剧大多是女主角）
 }
 
 def _get_voice_for_speaker(speaker: str) -> str:
@@ -99,12 +107,48 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
     voice_id = _get_voice_for_speaker(speaker)
     vtt_path = save_path.with_suffix(".vtt")
     
+    # ── SSML 情绪风格映射 ─────────────────────────────────────────
+    # XiaoxiaoNeural 支持: fearful, angry, sad, calm, cheerful, serious, lyrical 等
+    # XiaohanNeural  支持: calm, fearful, gentle, sad, serious, angry 等
+    # YunxiNeural    支持: angry, assistant, calm, cheerful, depressed, disgruntled, embarrassed, fearful, gentle, serious, sad, newscast
+    EMOTION_STYLE_MAP = {
+        "fearful":    ("fearful",   "2.0",  "+20%", "+5Hz"),   # 最大强度恐惧
+        "terrified":  ("fearful",   "2.0",  "+30%", "+10Hz"),  # 极度惊恐
+        "panicked":   ("fearful",   "1.8",  "+35%", "+8Hz"),   # 崩溃慌张
+        "angry":      ("angry",     "1.5",  "+10%", "+3Hz"),
+        "determined": ("serious",   "1.2",  "+5%",  "-2Hz"),
+        "cold":       ("calm",      "1.5",  "-15%", "-8Hz"),   # 克隆体：冷漠平静但语速慢
+        "sad":        ("sad",       "1.3",  "-10%", "-5Hz"),
+        "neutral":    ("calm",      "1.0",  "-10%", "+0Hz"),
+    }
+    style, degree, rate, pitch = EMOTION_STYLE_MAP.get(
+        emotion, EMOTION_STYLE_MAP["neutral"]
+    )
+    
+    # ── 构建 SSML（带情绪风格标签） ──────────────────────────────────
+    lang = "zh-CN" if not voice_id.startswith("en") else "en-US"
+    ssml = (
+        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+        f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{lang}">'
+        f'<voice name="{voice_id}">'
+        f'<mstts:express-as style="{style}" styledegree="{degree}">'
+        f'<prosody rate="{rate}" pitch="{pitch}">'
+        f'{processed_text}'
+        f'</prosody>'
+        f'</mstts:express-as>'
+        f'</voice>'
+        f'</speak>'
+    )
+    
+    # 把 SSML 写到临时文件（避免 shell 转义问题）
+    ssml_path = save_path.with_suffix(".ssml")
+    ssml_path.write_text(ssml, encoding="utf-8")
+    
     # 使用 python3 -m edge_tts 避免全局 PATH 找不到
     cmd = [
         "python3", "-m", "edge_tts",
-        "--text", processed_text,
+        "--file", str(ssml_path),
         "--voice", voice_id,
-        "--rate=-10%", # 悬疑剧整体语速降10%，增加压迫感。注意必须用 = 号，否则 argparse 会把 -10% 当成 flag
         "--write-media", str(save_path),
         "--write-subtitles", str(vtt_path)
     ]
