@@ -120,21 +120,20 @@ class ImageQAError(Exception):
     pass
 
 def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
-    from config.settings import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
-    import base64
-    import anthropic
+    from config.settings import DASHSCOPE_API_KEY
+    import dashscope
     
-    if not ANTHROPIC_API_KEY:
-        logger.warning("[Visual QA] ANTHROPIC_API_KEY not configured, skipping QA.")
+    if not DASHSCOPE_API_KEY:
+        logger.warning("[Visual QA] DASHSCOPE_API_KEY not configured, skipping QA.")
         return
         
+    dashscope.api_key = DASHSCOPE_API_KEY
+    
     try:
-        with open(image_path, "rb") as f:
-            img_b64 = base64.b64encode(f.read()).decode("utf-8")
-            
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # dashscope MultiModalConversation 支持直接传本地绝对路径 file://
+        file_url = f"file://{image_path.absolute()}"
         
-        system_prompt = """你是一个极其严格的自动化视觉审查员。你的任务是检查生成的 AI 图片是否符合标准。
+        prompt = f"""你是一个极其严格的自动化视觉审查员。你的任务是检查生成的 AI 图片是否符合标准。
 如果发现以下任意一项严重违规，必须直接回复以 "REJECT: " 开头的理由。
 如果完全合格，请回复 "PASS"。
 
@@ -142,31 +141,32 @@ def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
 1. 画面任何角落（特别是右下角、左下角）带有“AI生成”、“无界AI”或类似的中英文字符水印。
 2. 画面的环境/光线与剧本提示词存在严重冲突（例如：提示词要求是“黑夜”、“阴暗病房”，画面却看起来是大白天、阳光明媚）。
 3. 画面主体出现了极其恐怖扭曲的AI结构错误（如三头六臂，极其扭曲的五官）。
+
+这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查它是否带有水印或严重不符。
 """
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"image": file_url},
+                    {"text": prompt}
+                ]
+            }
+        ]
         
-        user_msg = f"这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查它是否带有水印或严重不符。"
-        
-        response = client.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=150,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_msg},
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": img_b64}}
-                    ]
-                }
-            ]
+        response = dashscope.MultiModalConversation.call(
+            model='qwen-vl-max',
+            messages=messages
         )
         
-        result = response.content[0].text.strip()
-        if result.startswith("REJECT"):
-            raise ImageQAError(result)
-        
-        logger.success("[Visual QA] 质检通过 ✅")
-        
+        if response.status_code == 200:
+            result = response.output.choices[0].message.content[0]["text"].strip()
+            if result.startswith("REJECT"):
+                raise ImageQAError(result)
+            logger.success(f"[Visual QA] 质检通过 ✅ (Qwen-VL)")
+        else:
+            logger.warning(f"[Visual QA] Qwen-VL error: {response.code} - {response.message}")
+            
     except Exception as e:
         if isinstance(e, ImageQAError):
             raise e

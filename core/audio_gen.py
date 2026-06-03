@@ -104,6 +104,50 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
     processed_text = re.sub(r'\[pause:(\d+\.?\d*)s?\]', lambda m: "。" * max(1, int(float(m.group(1)) * 2)), text)
     processed_text = processed_text.replace("...", "。。。")
     
+    # === 新增：DashScope 自定义音色拦截逻辑 ===
+    from config.settings import DASHSCOPE_API_KEY
+    import os
+    CUSTOM_TERRIFIED = os.getenv("DASHSCOPE_VOICE_TERRIFIED", "")
+    CUSTOM_ROBOTIC = os.getenv("DASHSCOPE_VOICE_ROBOTIC", "")
+    
+    is_clone = speaker and "克隆" in speaker
+    use_dashscope = False
+    
+    if is_clone and CUSTOM_ROBOTIC:
+        use_dashscope = True
+    elif emotion in ("fearful", "terrified", "panicked", "nervous", "shocked") and CUSTOM_TERRIFIED:
+        use_dashscope = True
+        
+    if use_dashscope and DASHSCOPE_API_KEY:
+        try:
+            from core.tts_engine import DynamicTTSEngine
+            engine = DynamicTTSEngine()
+            # DynamicTTSEngine 的 generate 内部会调用 sanitize 并且处理生成
+            engine.generate(role=speaker, emotion=emotion, raw_text=text, output_path=save_path)
+            
+            # 由于 DashScope 不直接生成 VTT，我们通过探测时长伪造一个包含整句的字幕文件
+            dur_cmd = ["ffprobe", "-i", str(save_path), "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0"]
+            dur_str = subprocess.check_output(dur_cmd).decode().strip()
+            dur_sec = float(dur_str)
+            
+            def format_ts(seconds: float) -> str:
+                h = int(seconds // 3600)
+                m = int((seconds % 3600) // 60)
+                s = int(seconds % 60)
+                ms = int((seconds - int(seconds)) * 1000)
+                return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+                
+            vtt_content = f"WEBVTT\n\n00:00:00.000 --> {format_ts(dur_sec)}\n{text}\n"
+            vtt_path = save_path.with_suffix(".vtt")
+            vtt_path.write_text(vtt_content, encoding="utf-8")
+            
+            logger.debug(f"Voice (DashScope) and VTT saved: {save_path}")
+            return save_path
+        except Exception as e:
+            logger.error(f"DashScope TTS failed: {e}. Falling back to Edge-TTS.")
+            # 如果 DashScope 失败，优雅降级到 edge-tts 继续往下执行
+            pass
+            
     voice_id = _get_voice_for_speaker(speaker)
     vtt_path = save_path.with_suffix(".vtt")
     
