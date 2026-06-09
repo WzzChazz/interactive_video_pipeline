@@ -6,6 +6,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()  # Ensure .env is loaded into os.environ for os.getenv calls below
+
 import requests
 from loguru import logger
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -29,23 +32,32 @@ import subprocess
 import hashlib
 
 VOICE_ROUTER = {
-    # 小劇固定角色（女）
-    "林悦": "zh-CN-XiaoxiaoNeural",      # 女主角，爹美女声
-    "克隆": "zh-CN-XiaohanNeural",       # 克隆体，欄櫥牢冷女声
-    "护士": "zh-CN-XiaoxiaoNeural",       # 甜美年轻女声
-    "女人": "zh-CN-XiaoyiNeural",         # 通用女声
-    "她": "zh-CN-XiaoxiaoNeural",
-    "女": "zh-CN-XiaoxiaoNeural",
-    "小女孩": "zh-CN-XiaoyiNeural",      # 活泣女声，适合女童
-    "助手": "zh-CN-XiaochenNeural",      # 助理女声
+    # ── 当前 edge-tts 可用的 zh-CN 声音（2025年版）──────────────────────
+    # zh-CN-XiaoxiaoNeural  Female  Warm       （主角女声）
+    # zh-CN-XiaoyiNeural    Female  Lively     （克隆体 / 通用女声）
+    # zh-CN-YunjianNeural   Male    Passion    （警察 / 反派）
+    # zh-CN-YunxiNeural     Male    Lively     （旁白 / 主角男）
+    # zh-CN-YunxiaNeural    Male    Cute       （男配角）
+    # zh-CN-YunyangNeural   Male    Professional（医生 / 严肃角色）
+    
+    # 小剧固定角色（女）
+    "林悦（克隆）": "zh-CN-XiaoyiNeural",   # 克隆体：XiaoyiNeural + 极低语速/音调 = 冷漠机械感
+    "林悦":         "zh-CN-XiaoxiaoNeural",  # 女主角：温暖女声
+    "克隆":         "zh-CN-XiaoyiNeural",    # 通用克隆体
+    "护士":         "zh-CN-XiaoxiaoNeural",  # 甜美护士
+    "女人":         "zh-CN-XiaoyiNeural",    # 通用女声
+    "她":           "zh-CN-XiaoxiaoNeural",
+    "女":           "zh-CN-XiaoxiaoNeural",
+    "小女孩":       "zh-CN-XiaoyiNeural",    # 活泼女童
+    "助手":         "zh-CN-XiaoxiaoNeural",  # 助理女声
     # 小剧固定角色（男）
-    "旁白": "zh-CN-YunxiNeural",          # 男声，稳重阳光
-    "主角": "zh-CN-YunxiNeural",
-    "医生": "zh-CN-YunyangNeural",         # 新闻播音男声，适合沉稳大叔
-    "警察": "zh-CN-YunjianNeural",        # 低沉男声，适合悬疑
-    "神秘人": "zh-CN-YunjianNeural",   # 借用低沉男声替代沙哑
-    "反派": "zh-CN-YunjianNeural",
-    "DEFAULT": "zh-CN-XiaoxiaoNeural"         # 默认女声（悉悧悬疑小剧大多是女主角）
+    "旁白":         "zh-CN-YunxiNeural",     # 男声旁白，稳重阳光
+    "主角":         "zh-CN-YunxiNeural",
+    "医生":         "zh-CN-YunyangNeural",   # 专业严肃男声
+    "警察":         "zh-CN-YunjianNeural",   # 低沉激情男声
+    "神秘人":       "zh-CN-YunjianNeural",   # 借用低沉男声
+    "反派":         "zh-CN-YunjianNeural",
+    "DEFAULT":      "zh-CN-XiaoxiaoNeural"   # 默认女声
 }
 
 def _get_voice_for_speaker(speaker: str) -> str:
@@ -53,15 +65,21 @@ def _get_voice_for_speaker(speaker: str) -> str:
     if not speaker:
         return VOICE_ROUTER["DEFAULT"]
     
-    # 精确匹配
-    for key, voice in VOICE_ROUTER.items():
+    # 先尝试完整精确匹配（最高优先级）
+    if speaker in VOICE_ROUTER:
+        return VOICE_ROUTER[speaker]
+    
+    # 再按 key 长度从长到短做子串匹配，避免「林悦」比「克隆」先命中「林悦（克隆）」
+    sorted_keys = sorted((k for k in VOICE_ROUTER if k != "DEFAULT"), key=len, reverse=True)
+    for key in sorted_keys:
         if key in speaker:
-            return voice
+            return VOICE_ROUTER[key]
             
-    # 如果没匹配到，根据名字的 hash 稳定分配一个声音，保证同一个未知角色的声音在整部剧中是一致的
-    available_voices = list(set(VOICE_ROUTER.values()))
+    # 未知角色：用 hash 稳定分配声音，保证整部剧同一角色声音一致
+    available_voices = list(set(v for k, v in VOICE_ROUTER.items() if k != "DEFAULT"))
     h = int(hashlib.md5(speaker.encode('utf-8')).hexdigest(), 16)
     return available_voices[h % len(available_voices)]
+
 
 def _is_scream(text: str) -> bool:
     """极端情绪降级：判断是否是纯尖叫/呼救，用于拦截交给真实音效引擎"""
@@ -151,57 +169,70 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
     voice_id = _get_voice_for_speaker(speaker)
     vtt_path = save_path.with_suffix(".vtt")
     
-    # ── SSML 情绪风格映射 ─────────────────────────────────────────
-    # XiaoxiaoNeural 支持: fearful, angry, sad, calm, cheerful, serious, lyrical 等
-    # XiaohanNeural  支持: calm, fearful, gentle, sad, serious, angry 等
-    # YunxiNeural    支持: angry, assistant, calm, cheerful, depressed, disgruntled, embarrassed, fearful, gentle, serious, sad, newscast
-    EMOTION_STYLE_MAP = {
-        "fearful":    ("fearful",   "2.0",  "+20%", "+5Hz"),   # 最大强度恐惧
-        "terrified":  ("fearful",   "2.0",  "+30%", "+10Hz"),  # 极度惊恐
-        "panicked":   ("fearful",   "1.8",  "+35%", "+8Hz"),   # 崩溃慌张
-        "angry":      ("angry",     "1.5",  "+10%", "+3Hz"),
-        "determined": ("serious",   "1.2",  "+5%",  "-2Hz"),
-        "cold":       ("calm",      "1.5",  "-15%", "-8Hz"),   # 克隆体：冷漠平静但语速慢
-        "sad":        ("sad",       "1.3",  "-10%", "-5Hz"),
-        "neutral":    ("calm",      "1.0",  "-10%", "+0Hz"),
+    # ── 情绪 → rate/pitch 映射（直接用参数，彻底抛弃 SSML） ──────────────
+    # edge-tts 无论是 --file CLI 还是 Python API Communicate()，
+    # 都不会解析 <speak> SSML 标签，会把 XML 当纯文字朗读 → 产生英文噪音
+    # 正确方案：用 Communicate(text, voice, rate=, pitch=) 的参数控制情绪节奏
+    EMOTION_RATE_MAP = {
+        "fearful":    ("+20%", "+5Hz"),
+        "terrified":  ("+30%", "+10Hz"),
+        "panicked":   ("+35%", "+8Hz"),
+        "angry":      ("+10%", "+3Hz"),
+        "determined": ("+5%",  "-2Hz"),
+        "cold":       ("-15%", "-8Hz"),
+        "sad":        ("-10%", "-5Hz"),
+        "neutral":    ("-10%", "+0Hz"),
+        "shocked":    ("+15%", "+5Hz"),
     }
-    style, degree, rate, pitch = EMOTION_STYLE_MAP.get(
-        emotion, EMOTION_STYLE_MAP["neutral"]
-    )
+    emo_rate, emo_pitch = EMOTION_RATE_MAP.get(emotion, ("-10%", "+0Hz"))
     
-    # ── 构建 SSML（带情绪风格标签） ──────────────────────────────────
-    lang = "zh-CN" if not voice_id.startswith("en") else "en-US"
-    ssml = (
-        f'<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
-        f'xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="{lang}">'
-        f'<voice name="{voice_id}">'
-        f'<mstts:express-as style="{style}" styledegree="{degree}">'
-        f'<prosody rate="{rate}" pitch="{pitch}">'
-        f'{processed_text}'
-        f'</prosody>'
-        f'</mstts:express-as>'
-        f'</voice>'
-        f'</speak>'
-    )
-    
-    # 把 SSML 写到临时文件（避免 shell 转义问题）
-    ssml_path = save_path.with_suffix(".ssml")
-    ssml_path.write_text(ssml, encoding="utf-8")
-    
-    # 使用 python3 -m edge_tts 避免全局 PATH 找不到
-    cmd = [
-        "python3", "-m", "edge_tts",
-        "--file", str(ssml_path),
-        "--voice", voice_id,
-        "--write-media", str(save_path),
-        "--write-subtitles", str(vtt_path)
-    ]
-    
+    # ── 用 edge-tts Python API 直接传纯文本 + 参数 ──────────────────────
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        raise AudioGenError(f"Edge-TTS failed: {e.stderr}")
+        import asyncio
+        import edge_tts
         
+        async def _synthesize():
+            communicate = edge_tts.Communicate(
+                processed_text,
+                voice_id,
+                rate=emo_rate,
+                pitch=emo_pitch,
+            )
+            await communicate.save(str(save_path))
+            # 收集 WordBoundary 事件生成字幕
+            sub_maker = edge_tts.SubMaker()
+            async for chunk in edge_tts.Communicate(processed_text, voice_id, rate=emo_rate, pitch=emo_pitch).stream():
+                if chunk["type"] == "WordBoundary":
+                    sub_maker.feed(chunk)
+            srt_content = sub_maker.get_srt()
+            if srt_content.strip():
+                vtt_path.write_text(srt_content, encoding="utf-8")
+            else:
+                # 兜底：写一个单条 SRT 字幕，时长与音频一致
+                # 注意时间格式必须用逗号（SRT标准），_parse_time_to_seconds 才能正确解析
+                vtt_path.write_text(f"1\n00:00:00,000 --> 00:00:09,900\n{text}\n\n", encoding="utf-8")
+        
+        asyncio.run(_synthesize())
+        
+    except Exception as e:
+        # 降级：CLI --text 传纯文本（绝不用 --file 传 SSML）
+        logger.warning(f"edge_tts Python API failed ({e}), falling back to CLI with --text")
+        # 关键修复：负数参数（如 -10%）必须用 = 连接，否则 argparse 把它当另一个 flag
+        cmd = [
+            "python3", "-m", "edge_tts",
+            "--text", processed_text,
+            "--voice", voice_id,
+            f"--rate={emo_rate}",    # 必须用 = ，避免 -10% 被 argparse 误识别为 flag
+            f"--pitch={emo_pitch}",  # 同上
+            "--write-media", str(save_path),
+            "--write-subtitles", str(vtt_path)
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as ex:
+            raise AudioGenError(f"Edge-TTS CLI failed: {ex.stderr}")
+        
+
     logger.debug("Voice (Edge-TTS) and VTT saved: {}", save_path)
     return save_path
 
@@ -217,7 +248,7 @@ def generate_sfx(prompt: str, save_path: Path,
         save_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi",
-            "-i", "aevalsrc='random(0)*0.03*sin(2*PI*t*0.5) + sin(2*PI*t*40)*0.1'",
+            "-i", "aevalsrc='random(0)*0.15*sin(2*PI*t*0.5) + sin(2*PI*t*80)*0.4'",
             "-t", str(duration_seconds),
             "-c:a", "libmp3lame",
             str(save_path)
@@ -257,6 +288,18 @@ def generate_sfx(prompt: str, save_path: Path,
     logger.debug("SFX saved ({} bytes): {}", len(resp.content), save_path)
     return save_path
 
+
+import redis
+import json
+
+def _publish_progress(episode_tag: str, step_name: str, pct: int):
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        r.publish("pipeline_progress", json.dumps({
+            "active": True, "step_name": step_name, "step": 4, "total": 6, "pct": pct, "episode": episode_tag
+        }))
+    except:
+        pass
 
 def generate_audio(scenes: list[dict], episode_tag: str, episode_id: Optional[int] = None, theme_key: str = "hospital_horror") -> dict[int, dict[str, str]]:
     """

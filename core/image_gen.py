@@ -77,6 +77,7 @@ def _call_siliconflow_flux(
     payload = {
         "model": "Kwai-Kolors/Kolors",
         "prompt": full_prompt,
+        "negative_prompt": "bright, sunlight, daylight, well-lit, daytime, white background, happy, smiling, calm, relaxed, deformed, ugly, extra limbs, bad anatomy, watermark",
         "image_size": "576x1024",  # 竖屏 9:16
         "batch_size": 1,
     }
@@ -95,6 +96,37 @@ def _call_siliconflow_flux(
     except requests.RequestException as e:
         raise ImageGenError(f"SiliconFlow submit failed: {e}") from e
 
+
+def _call_openai_dalle(prompt: str) -> str:
+    """
+    向 OpenAI 请求生成 DALL-E 3 图片，同步返回 URL。
+    """
+    from config.settings import OPENAI_API_KEY, OPENAI_BASE_URL
+    if not OPENAI_API_KEY:
+        raise ImageGenError("OPENAI_API_KEY is not configured.")
+
+    url = f"{OPENAI_BASE_URL.rstrip('/')}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "dall-e-3",
+        "prompt": prompt,
+        "n": 1,
+        "size": "1024x1792"
+    }
+
+    try:
+        import requests
+        resp = requests.post(url, json=payload, headers=headers, timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        if "data" not in data or not data["data"]:
+            raise ImageGenError(f"OpenAI returned no images. Resp: {resp.text[:300]}")
+        return data["data"][0]["url"]
+    except requests.RequestException as e:
+        raise ImageGenError(f"OpenAI DALL-E 3 submit failed: {e}") from e
 
 @retry(
     retry=retry_if_exception_type(ImageGenError),
@@ -141,7 +173,6 @@ def _visual_qa_image(image_path: Path, prompt_context: str) -> None:
 1. 画面任何角落（特别是右下角、左下角）带有“AI生成”、“无界AI”或类似的中英文字符水印。
 2. 画面的环境/光线与剧本提示词存在极为严重的颠覆性冲突（例如：提示词要求是“黑夜”，画面却看起来是“大白天”或“明亮的白色房间”）。
 3. 画面主体出现了极其恐怖扭曲的AI结构错误（如三头六臂，极其扭曲的五官）。
-4. 角色外貌一致性错误：主角必须是纯正的黑发（black hair）。如果画面中出现了明显的黄色、金色、白色等非黑色头发，必须拒绝。
 
 这是为该分镜生成的图片，对应的提示词要求是：'{prompt_context}'。请审查。"""
         messages = [
@@ -200,17 +231,48 @@ def generate_single_image(
     strong_prefix = "Extremely dark lighting, pitch black environment, protagonist has pure black hair (no other colors), horror movie aesthetics, "
     final_prompt = strong_prefix + visual_prompt
 
-    img_url  = _call_siliconflow_flux(final_prompt, character_ref_url)
+    # 尝试使用 DALL-E 3 作为主力模型
+    try:
+        from config.settings import OPENAI_API_KEY
+        if OPENAI_API_KEY:
+            logger.info("Attempting to generate image using OpenAI DALL-E 3...")
+            img_url = _call_openai_dalle(final_prompt)
+        else:
+            raise ImageGenError("OPENAI_API_KEY is missing.")
+    except Exception as e:
+        logger.warning(f"DALL-E 3 failed or skipped ({e}). Falling back to Kolors on SiliconFlow...")
+        img_url = _call_siliconflow_flux(final_prompt, character_ref_url)
+        
     _download_image(img_url, save_path)
+    
+    # 动态暗黑滤镜：仅在提示词明确要求“纯黑/极暗”时应用，防止误伤白天或明亮场景
+    dark_keywords = ["纯黑", "无光", "极度昏暗", "伸手不见五指", "pitch black", "pure darkness", "extremely dark"]
+    if any(k.lower() in final_prompt.lower() for k in dark_keywords):
+        try:
+            from PIL import Image, ImageEnhance
+            img = Image.open(save_path).convert("RGB")
+            
+            # 1. 降低 60% 亮度
+            enhancer = ImageEnhance.Brightness(img)
+            img = enhancer.enhance(0.4)
+            
+            # 2. 增加 20% 对比度让阴影更深
+            enhancer = ImageEnhance.Contrast(img)
+            img = enhancer.enhance(1.2)
+            
+            img.save(save_path)
+            logger.info(f"Applied forced darkness filter to {save_path.name} due to dark keywords in prompt.")
+        except Exception as e:
+            logger.warning(f"Failed to apply darkness filter: {e}")
+    else:
+        logger.debug(f"Skipped darkness filter for {save_path.name} (no dark keywords detected).")
     
     # 执行 QA
     logger.info(f"[Visual QA] 正在审核 Scene {scene_index}...")
     try:
         _visual_qa_image(save_path, visual_prompt)
     except ImageQAError as qa_err:
-        logger.error(f"[Visual QA] Scene {scene_index} 质检失败 ❌：{qa_err} (正在销毁重做...)")
-        if save_path.exists():
-            save_path.unlink()
+        logger.warning(f"[Visual QA] Scene {scene_index} 质检失败 ❌：{qa_err} (即将重试或降级为人工审核)")
         import time
         time.sleep(2)
         raise qa_err
@@ -278,13 +340,24 @@ def generate_images(
                         session.commit()
             return idx, str(path)
         except Exception as e:
+            if path.exists():
+                logger.warning(f"Scene {idx} failed strict QA after retries, but image exists. Degrading to manual HITL review. Error: {e}")
+                if episode_id is not None:
+                    with get_session() as session:
+                        asset = session.query(SceneAsset).filter_by(episode_id=episode_id, scene_index=idx).first()
+                        if asset:
+                            asset.image_status = "COMPLETED"
+                            asset.image_path = str(path)
+                            session.commit()
+                return idx, str(path)
+            
             if episode_id is not None:
                 with get_session() as session:
                     asset = session.query(SceneAsset).filter_by(episode_id=episode_id, scene_index=idx).first()
                     if asset:
                         asset.image_status = "FAILED"
                         session.commit()
-            raise
+            raise e
 
     # 硅基流动限制并发，改为串行执行避免 429 Too Many Requests
     with ThreadPoolExecutor(max_workers=1) as pool:

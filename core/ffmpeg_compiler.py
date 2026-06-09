@@ -16,6 +16,8 @@ FFmpeg 工业级无头合片工具。
 
 import json
 import subprocess
+import redis
+import json
 import tempfile
 from pathlib import Path
 from typing import Optional, Literal
@@ -39,6 +41,17 @@ class FFmpegError(Exception):
 # ──────────────────────────────────────────────────────────
 # FFmpeg 执行辅助
 # ──────────────────────────────────────────────────────────
+
+
+def _publish_progress(episode_tag: str, step_name: str, pct: int):
+    try:
+        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        r.publish("pipeline_progress", json.dumps({
+            "active": True, "step_name": step_name, "step": 5, "total": 6, "pct": pct, "episode": episode_tag
+        }))
+    except:
+        pass
+
 
 def _run_ffmpeg(args: list[str], step_name: str = "ffmpeg") -> None:
     """
@@ -139,7 +152,9 @@ def _seconds_to_srt_time(seconds: float) -> str:
 
 def _parse_time_to_seconds(t_str: str) -> float:
     try:
-        h, m, s = t_str.strip().split(':')
+        # 同时支持 SRT（HH:MM:SS,mmm）和 VTT（HH:MM:SS.mmm）两种格式
+        t_str = t_str.strip().replace(",", ".")
+        h, m, s = t_str.split(':')
         return int(h) * 3600 + int(m) * 60 + float(s)
     except:
         return 0.0
@@ -165,7 +180,7 @@ def _generate_srt(scenes: list[dict], scene_durations: list[float], audio_manife
         if not text:
             continue
             
-        audio_map = audio_manifest.get(idx, {})
+        audio_map = audio_manifest.get(str(idx), audio_manifest.get(idx, {}))
         voice_path = audio_map.get("voice", "")
         vtt_path = Path(voice_path).with_suffix(".vtt") if voice_path else None
         
@@ -237,9 +252,9 @@ def _concat_video_clips(
         "-c:v", "libx264",
         "-preset", "fast",
         "-crf", "18",
-        "-vf", f"crop=iw*0.9:ih*0.9:(iw-ow)/2:(ih-oh)/2,"
-               f"eq=brightness=-0.05:contrast=1.15:saturation=0.7,"
-               f"curves=red='0/0 1/0.9':blue='0/0.05 1/1.0',"
+        "-vf", f"fps=30,setsar=1,crop=iw*0.9:ih*0.9:(iw-ow)/2:(ih-oh)/2,"
+               f"eq=brightness=-0.05:contrast=1.15:saturation=0.8,"
+               f"curves=red='0/0 1/0.95':blue='0/0.02 1/1.0',"
                f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
                f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black",
         "-an",
@@ -309,7 +324,7 @@ def _build_audio_track(
         idx       = scene["scene_index"]
         offset    = current_offset
         current_offset += scene_durations[i]
-        audio_map = audio_manifest.get(idx, {})
+        audio_map = audio_manifest.get(idx, audio_manifest.get(str(idx), {}))
 
         # 配音轨 (应用物理空间混响)
         voice_path = audio_map.get("voice", "")
@@ -623,28 +638,69 @@ def compile_video(
             last_image_path = image_manifest.get(last_scene_idx)
             logger.info(f"[DEBUG] last_scene_idx={last_scene_idx}, image_manifest keys={list(image_manifest.keys())}, last_image_path={last_image_path}")
 
+        import concurrent.futures
+        from config.settings import USE_LIPSYNC
+        
+        def _process_scene_lipsync(scene: dict) -> tuple[int, str]:
+            s_idx = scene["scene_index"]
+            s_path = clip_manifest.get(s_idx, "")
+            if not s_path or not Path(s_path).exists():
+                raise FFmpegError(f"Scene {s_idx} clip not found: '{s_path}'")
+                
+            a_map = audio_manifest.get(s_idx, audio_manifest.get(str(s_idx), {}))
+            v_path = a_map.get("voice", "")
+            
+            # --- START VIDEO EXTENSION (PREVENT AUDIO OVERLAP) ---
+            if v_path and Path(v_path).exists() and Path(v_path).stat().st_size > 0:
+                v_dur = _get_audio_duration(v_path)
+                vid_dur = _get_audio_duration(s_path) # Gets video container duration
+                if v_dur > vid_dur:
+                    logger.info("Scene {} audio ({:.2f}s) is longer than video ({:.2f}s). Extending video...", s_idx, v_dur, vid_dur)
+                    extend_sec = v_dur - vid_dur + 0.3 # Add 0.3s safety margin
+                    extended_path = tmp_dir / f"extended_scene_{s_idx:02d}.mp4"
+                    try:
+                        _run_ffmpeg([
+                            "-i", str(s_path),
+                            "-vf", f"tpad=stop_mode=clone:stop_duration={extend_sec}",
+                            "-c:a", "copy",
+                            "-y", str(extended_path)
+                        ], step_name=f"extend_video_{s_idx}")
+                        s_path = str(extended_path)
+                    except Exception as e:
+                        logger.warning("Failed to extend video for scene {}: {}", s_idx, e)
+            # --- END VIDEO EXTENSION ---
+
+            # --- START LIPSYNC INJECTION ---
+            if s_idx != -1:
+                from config.settings import USE_LIPSYNC
+                
+                if USE_LIPSYNC and v_path and Path(v_path).exists() and Path(v_path).stat().st_size > 0 and scene.get("dialogue"):
+                    logger.info("Applying LipSync + CodeFormer to Scene {}...", s_idx)
+                    _publish_progress(episode_tag, f"唇形增强 (片段 {s_idx}/6)", 45 + s_idx * 4)
+                    try:
+                        from core.lip_sync_engine import LipSyncEngine
+                        ls_engine = LipSyncEngine()
+                        f_lipsync_path = tmp_dir / f"lipsync_scene_{s_idx:02d}.mp4"
+                        # If it succeeds, replace s_path with the lipsynced version
+                        s_path = ls_engine.generate_talking_head(s_path, v_path, str(f_lipsync_path))
+                    except Exception as e:
+                        logger.error(f"LipSync failed for Scene {s_idx}, falling back to original video. Error: {e}")
+            # --- END LIPSYNC INJECTION ---
+            return s_idx, s_path
+
+        processed_paths = {}
+        # Concurrently process LipSync for all scenes
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future_to_idx = {executor.submit(_process_scene_lipsync, sc): sc["scene_index"] for sc in sorted_scenes}
+            for future in concurrent.futures.as_completed(future_to_idx):
+                s_idx, final_path = future.result()
+                processed_paths[s_idx] = final_path
+
         clip_paths = []
         scene_durations = []
         for scene in sorted_scenes:
             idx  = scene["scene_index"]
-            path = clip_manifest.get(idx, "")
-            if not path or not Path(path).exists():
-                raise FFmpegError(f"Scene {idx} clip not found: '{path}'")
-            
-            # --- START LIPSYNC INJECTION ---
-            if idx != -1:
-                from config.settings import USE_LIPSYNC
-                audio_map = audio_manifest.get(idx, {})
-                voice_path = audio_map.get("voice", "")
-                
-                # Check if lipsync is enabled, voice exists, and it's not a reaction shot (empty dialogue)
-                if USE_LIPSYNC and voice_path and Path(voice_path).exists() and Path(voice_path).stat().st_size > 0 and scene.get("dialogue"):
-                    logger.info("Applying LipSync + CodeFormer to Scene {}...", idx)
-                    from core.lip_sync_engine import LipSyncEngine
-                    lipsync = LipSyncEngine()
-                    final_lipsync_path = tmp_dir / f"lipsync_scene_{idx:02d}.mp4"
-                    path = lipsync.generate_talking_head(path, voice_path, str(final_lipsync_path))
-            # --- END LIPSYNC INJECTION ---
+            path = processed_paths[idx]
             
             clip_paths.append(path)
             
@@ -652,7 +708,7 @@ def compile_video(
                 dur = cold_open_dur
             else:
                 # 读取配音时长进行动态去水裁剪
-                audio_map = audio_manifest.get(idx, {})
+                audio_map = audio_manifest.get(str(idx), audio_manifest.get(idx, {}))
                 voice_path = audio_map.get("voice", "")
                 if voice_path and Path(voice_path).exists() and Path(voice_path).stat().st_size > 0:
                     dur = _get_audio_duration(voice_path) + 0.3

@@ -33,6 +33,8 @@ class AppSettings(BaseSettings):
     # 3. 视觉生图
     FLUX_API_KEY: str = ""
     FLUX_API_URL: str = "https://api.siliconflow.cn/v1/images/generations"
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
     USE_LIPSYNC: bool = False
     MIDJOURNEY_API_KEY: str = ""
 
@@ -44,7 +46,7 @@ class AppSettings(BaseSettings):
     HAILUO_API_KEY: str = ""
     HAILUO_API_URL: str = "https://api.minimax.io/v1"
     ZHIPU_API_KEY: str = ""
-    VIDEO_PROVIDER: str = "zhipu"  # "kling" | "runway" | "hailuo" | "zhipu"
+    VIDEO_PROVIDER: str = "kling"  # "kling" | "runway" | "hailuo" | "zhipu"
 
     # 5. 音频合成
     USE_ELEVENLABS_SFX: bool = False
@@ -86,6 +88,8 @@ DEEPSEEK_BASE_URL = _cfg.DEEPSEEK_BASE_URL
 DEEPSEEK_MODEL = _cfg.DEEPSEEK_MODEL
 FLUX_API_KEY = _cfg.FLUX_API_KEY
 FLUX_API_URL = _cfg.FLUX_API_URL
+OPENAI_API_KEY = _cfg.OPENAI_API_KEY
+OPENAI_BASE_URL = _cfg.OPENAI_BASE_URL
 USE_LIPSYNC = _cfg.USE_LIPSYNC
 MIDJOURNEY_API_KEY = _cfg.MIDJOURNEY_API_KEY
 KLING_API_KEY = _cfg.KLING_API_KEY

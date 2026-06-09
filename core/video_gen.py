@@ -33,6 +33,25 @@ def _image_to_base64_data_uri(image_path: str) -> str:
     mime_type = "jpeg" if ext == "jpg" else ext
     return f"data:image/{mime_type};base64,{encoded}"
 
+def check_video_brightness(video_path: Path) -> None:
+    """自动使用 FFmpeg 检查视频亮度，过亮则抛出红字警告"""
+    import subprocess
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "frame=tags=lavfi.signalstats.YAVG",
+            "-of", "default=noprint_wrappers=1:nokey=1", "-vf", "signalstats", str(video_path)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        lines = [float(x.strip()) for x in res.stdout.split() if x.strip()]
+        if not lines: return
+        avg_y = sum(lines) / len(lines)
+        if avg_y > 150:  # 0-255，大于 150 认为偏亮，破坏恐怖氛围
+            logger.error(f"🚨 [质量警告] 视频 {video_path.name} 亮度过高 (YAVG={avg_y:.1f} > 150)！可能破坏了极度昏暗的环境氛围。")
+        else:
+            logger.debug(f"[质量检查] 视频 {video_path.name} 亮度合规 (YAVG={avg_y:.1f})")
+    except Exception as e:
+        logger.warning(f"亮度检测失败: {e}")
+
 def _poll_and_download_atomic(
     task_id: str, 
     fetch_status_fn: Callable[[], Tuple[str, Any]], 
@@ -106,6 +125,7 @@ def _poll_and_download_atomic(
             time.sleep(5)
             
     logger.success(f"Video downloaded successfully to {save_path}")
+    check_video_brightness(save_path)
     return save_path
 
 @retry(retry=retry_if_exception_type(VideoGenError), stop=stop_after_attempt(API_MAX_RETRIES), wait=wait_exponential(min=10, max=60), reraise=True)
@@ -340,12 +360,93 @@ def _zhipu_generate(image_path: str, save_path: Path, prompt: str = "") -> Path:
 
     return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
 
+def _aliyun_generate(image_path: str, save_path: Path, prompt: str = "") -> Path:
+    """调用阿里云通义万相 (Wan) 图生视频模型，完美解决毁图问题且极低成本。"""
+    import os
+    import requests
+    
+    from dotenv import load_dotenv
+    load_dotenv()
+    DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "").strip()
+    if not DASHSCOPE_API_KEY:
+        raise VideoGenError("DASHSCOPE_API_KEY is not configured in .env")
+
+    img_data_uri = _image_to_base64_data_uri(image_path)
+    
+    headers = {
+        "Authorization": f"Bearer {DASHSCOPE_API_KEY}",
+        "X-DashScope-Async": "enable",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": "wan2.7-i2v",
+        "input": {
+            "prompt": prompt,
+            "media": [
+                {
+                    "type": "first_frame",
+                    "url": img_data_uri
+                }
+            ]
+        },
+        "parameters": {
+            "resolution": "720P"
+        }
+    }
+    
+    submit_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
+    
+    # 无限制缓冲：增加 1 次自动重试应对网络抖动
+    task_id = None
+    data = {}
+    for attempt in range(2):
+        try:
+            resp = requests.post(submit_url, headers=headers, json=payload, timeout=30)
+            data = resp.json()
+            if "output" not in data or "task_id" not in data["output"]:
+                raise ValueError(f"No task_id in response: {data}")
+            task_id = data["output"]["task_id"]
+            break
+        except Exception as e:
+            if attempt == 1:
+                raise VideoGenError(f"Aliyun Wan API submit failed after retry: {e}")
+            logger.warning(f"Aliyun API submit failed, retrying in 3s... ({e})")
+            time.sleep(3)
+            
+    logger.info(f"Aliyun Wan task submitted. Task ID: {task_id}")
+    
+    query_url = f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
+    
+    def fetch_status():
+        qr = requests.get(query_url, headers={"Authorization": f"Bearer {DASHSCOPE_API_KEY}"})
+        qdata = qr.json()
+        if "output" not in qdata:
+            return "failed", None
+            
+        status = qdata["output"]["task_status"]
+        if status == "SUCCEEDED":
+            return "success", qdata
+        elif status == "FAILED":
+            logger.error(f"Aliyun Wan task failed: {qdata}")
+            return "failed", None
+        return "processing", None
+        
+    def extract_url(qdata):
+        return qdata["output"]["video_url"]
+        
+    return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
+
+
 def generate_single_clip(scene_index: int, image_path: str, save_path: Path, camera_note: str = "") -> Path:
     """生成单个视频片段，自带容灾兜底。"""
     try:
         if VIDEO_PROVIDER == "zhipu":
             logger.info("Generating clip scene {} via Zhipu API...", scene_index)
             return _zhipu_generate(image_path, save_path, prompt=camera_note)
+        elif VIDEO_PROVIDER == "aliyun":
+            logger.info("Generating clip scene {} via Aliyun Wan API...", scene_index)
+            return _aliyun_generate(image_path, save_path, prompt=camera_note)
         elif VIDEO_PROVIDER == "hailuo":
             logger.info("Generating clip scene {} via Hailuo API...", scene_index)
             return _hailuo_generate(image_path, save_path, prompt=camera_note)
@@ -362,7 +463,7 @@ def generate_single_clip(scene_index: int, image_path: str, save_path: Path, cam
             if len(words) >= 2:
                 keyword = f"{words[0]} {words[1]} dark"
                 
-        return fetch_fallback_video(keyword, save_path)
+        return fetch_fallback_video(keyword, save_path, image_path=image_path)
 
 def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], episode_tag: str, episode_id: Optional[int] = None) -> dict[int, str]:
     """并发将所有分镜静态图转换为视频片段（含断点续跑）。"""
@@ -387,6 +488,9 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
         
         if idx in [1, 2]:
             camera_note += ", extremely fast zoom in, terrifying kubrick style symmetrical push"
+        
+        # 强制 AI 保持暗场光影，防止其自作主张提亮画面
+        camera_note += ", strictly keep the original dark lighting, very low exposure, pitch black shadows, do not brighten the scene, cinematic dark horror atmosphere"
         
         img_path = image_manifest.get(idx, "")
         if not img_path or not Path(img_path).exists():

@@ -56,6 +56,9 @@ finally:
 
     def run_wav2lip(self, video_path: str, audio_path: str, output_path: str):
         """执行 Wav2Lip 对口型推理 (动态劫持 MPS)"""
+        if not self.w2l_ckpt.exists():
+            raise LipSyncError(f"Wav2Lip Checkpoint not found: {self.w2l_ckpt}")
+            
         logger.info(f"[LipSync] Starting Wav2Lip for {video_path}")
         
         # 必须跳进目标目录才能找到依赖模块
@@ -67,8 +70,7 @@ finally:
             "--audio", str(Path(audio_path).absolute()),
             "--outfile", str(Path(output_path).absolute()),
             "--face_det_batch_size", "1", # 强制单帧推理，防止 Accelerate 崩溃/OOM
-            "--wav2lip_batch_size", "1",
-            "--nosmooth" # 修复脸部抖动问题
+            "--wav2lip_batch_size", "1"
         ]
         
         patch_code = self._create_monkey_patch_script(script_path, args)
@@ -102,12 +104,24 @@ finally:
         script_path = "inference_codeformer.py"
         
         args = [
-            "-w", "0.3",  # 降低保真度权重，强制 AI 使用最高清细节覆盖 Wav2Lip 的模糊嘴部
+            "-w", "0.9",  # 高保真度权重：防止在暗光场景下 AI 幻视出极其明亮发光的牙齿和嘴唇
             "-i", str(Path(input_video).absolute()),
             "-o", str(Path(output_dir).absolute())
         ]
         
         patch_code = self._create_monkey_patch_script(script_path, args)
+        
+        # 强制将 CodeFormer 的运行环境修改为 CPU，彻底杜绝瞬间爆显存 (OOM) 导致系统强杀
+        cpu_force_header = """
+import os
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+import torch
+if hasattr(torch.backends, 'mps'):
+    torch.backends.mps.is_available = lambda: False
+    torch.backends.mps.is_built = lambda: False
+"""
+        patch_code = cpu_force_header + patch_code
+        
         runner_path = self.codeformer_dir / "mps_runner.py"
         with open(runner_path, "w") as f:
             f.write(patch_code)
@@ -145,7 +159,15 @@ finally:
         # 2. CodeFormer 画质急救 (如果没有下载完毕则跳过，防止崩溃)
         codeformer_weight = Path("/Users/mac/project/interactive_video_pipeline/local_models/CodeFormer/weights/CodeFormer/codeformer.pth")
         
-        if codeformer_weight.exists() and codeformer_weight.stat().st_size > 100 * 1024 * 1024:
+        use_codeformer = os.getenv("USE_CODEFORMER", "true").lower() == "true"
+        # 检查是否安装了 CodeFormer 模型
+        has_codeformer = (Path("local_models/CodeFormer/weights/CodeFormer").exists() or 
+                         Path("local_models/CodeFormer").exists())
+                         
+        # === CodeFormer enabled for high definition output ===
+        bypass_codeformer = False
+        
+        if has_codeformer and not bypass_codeformer and use_codeformer and codeformer_weight.exists() and codeformer_weight.stat().st_size > 100 * 1024 * 1024:
             logger.info("[LipSync] CodeFormer weights detected, initiating face restoration...")
             restored_dir = str(Path(final_out).parent / "restored")
             self.run_codeformer(temp_w2l_out, restored_dir)
@@ -156,10 +178,23 @@ finally:
                 restored_videos = list(Path(restored_dir).rglob("*.mp4"))
                 if restored_videos:
                     # 按照修改时间排序，拿到最新生成的视频
-                    best_video = sorted(restored_videos, key=lambda x: x.stat().st_mtime, reverse=True)[0]
-                    shutil.move(str(best_video), final_out)
-                    logger.success(f"[LipSync] 成功输出 CodeFormer 修复后的高清视频: {final_out}")
-                    
+                    best_video = sorted(restored_videos, key=os.path.getmtime)[-1]
+                    # CodeFormer 生成的视频丢失了原音频，我们需要用 FFmpeg 将原配音重新合并进去
+                    import subprocess
+                    subprocess.run([
+                        "ffmpeg", "-y",
+                        "-i", str(best_video),
+                        "-i", audio_source,
+                        "-c:v", "libx264",
+                        "-preset", "fast",
+                        "-crf", "18",
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac",
+                        "-map", "0:v:0",
+                        "-map", "1:a:0",
+                        final_out
+                    ], check=True, capture_output=True)
+                    logger.success(f"[LipSync] 成功输出带有音频的 CodeFormer 高清修复视频: {final_out}")                    
                     # 清理临时文件和目录
                     if Path(temp_w2l_out).exists():
                         os.remove(temp_w2l_out)
@@ -176,3 +211,5 @@ finally:
         if not Path(final_out).exists():
             shutil.move(temp_w2l_out, final_out)
             logger.success(f"[LipSync] 已输出 Wav2Lip 原始视频 (未进行画质修复) 至 {final_out}")
+            
+        return final_out

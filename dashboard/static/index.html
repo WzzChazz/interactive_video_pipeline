@@ -1,128 +1,216 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>🎬 Pipeline Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0a0f;--surface:#13131f;--surface2:#1c1c2e;--border:#2a2a3f;--accent:#7c3aed;--accent2:#4f46e5;--green:#10b981;--red:#ef4444;--yellow:#f59e0b;--blue:#3b82f6;--text:#e2e8f0;--muted:#64748b}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;backdrop-filter:blur(10px)}
-.logo{font-size:18px;font-weight:700;background:linear-gradient(135deg,#7c3aed,#4f46e5);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.badge{padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600}
-.badge-voting{background:#1e3a5f;color:#60a5fa}
-.badge-pending_review{background:#4a2e0a;color:#f59e0b;animation:pulse 2s infinite}
-.badge-generating{background:#2d1b69;color:#a78bfa}
-.badge-generating_assets{background:#2d1b69;color:#a78bfa;animation:pulse 2s infinite}
-.badge-completed{background:#064e3b;color:#34d399}
-.badge-published{background:#1a3a1a;color:#4ade80}
-.badge-failed{background:#450a0a;color:#f87171}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-.layout{display:grid;grid-template-columns:1fr 380px;gap:0;height:calc(100vh - 57px)}
-.main{overflow-y:auto;padding:20px}
-.sidebar{border-left:1px solid var(--border);display:flex;flex-direction:column;height:100%;overflow:hidden}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
-.stat-card .num{font-size:28px;font-weight:700;line-height:1}
-.stat-card .label{font-size:11px;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
-.toolbar{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center}
-.btn{padding:8px 16px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:.2s;font-family:inherit}
-.btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff}
-.btn-primary:hover{opacity:.85}
-.btn-ghost{background:var(--surface2);color:var(--text);border:1px solid var(--border)}
-.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
-.btn-danger{background:#450a0a;color:#f87171;border:1px solid #7f1d1d}
-.btn-danger:hover{background:#7f1d1d}
-.btn-sm{padding:5px 10px;font-size:12px}
-.filter-bar{display:flex;gap:8px;flex-wrap:wrap}
-.filter-btn{padding:5px 12px;border-radius:99px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:12px;transition:.2s}
-.filter-btn.active,.filter-btn:hover{background:var(--accent);color:#fff;border-color:var(--accent)}
-.ep-list{display:flex;flex-direction:column;gap:10px}
-.ep-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:.2s;position:relative;overflow:hidden}
-.ep-card:hover{border-color:var(--accent);transform:translateY(-1px)}
-.ep-card.selected{border-color:var(--accent);background:var(--surface2)}
-.ep-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
-.ep-card.status-voting::before{background:var(--blue)}
-.ep-card.status-pending_review::before{background:var(--yellow);animation:pulse 1.5s infinite}
-.ep-card.status-generating::before{background:var(--accent)}
-.ep-card.status-generating_assets::before{background:var(--accent);animation:pulse 1.5s infinite}
-.ep-card.status-completed::before{background:var(--green)}
-.ep-card.status-published::before{background:#4ade80}
-.ep-card.status-failed::before{background:var(--red)}
-.ep-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.ep-tag{font-size:11px;font-weight:600;color:var(--muted);font-family:monospace}
-.ep-title{font-size:14px;font-weight:600;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ep-meta{display:flex;gap:12px;font-size:11px;color:var(--muted)}
-.vote-bar{display:flex;height:4px;border-radius:2px;overflow:hidden;margin-top:8px;background:var(--surface2)}
-.vote-a{background:var(--blue);transition:width .5s}
-.vote-b{background:var(--accent);transition:width .5s}
-.detail-panel{padding:20px;overflow-y:auto;flex:1}
-.detail-header{margin-bottom:16px}
-.detail-title{font-size:16px;font-weight:700;margin-bottom:4px}
-.detail-tag{font-size:11px;color:var(--muted);font-family:monospace}
-.detail-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
-.section{margin-bottom:16px}
-.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.scene-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px}
-.scene-num{font-size:10px;font-weight:700;color:var(--accent);font-family:monospace}
-.scene-dialogue{font-size:13px;margin:4px 0 8px;line-height:1.5}
-.scene-prompt{font-size:11px;color:var(--muted);line-height:1.4;font-family:monospace;background:var(--bg);padding:6px 8px;border-radius:6px}
-.error-box{background:#450a0a;border:1px solid #7f1d1d;border-radius:8px;padding:12px;font-size:12px;color:#f87171;line-height:1.5}
-.log-panel{border-top:1px solid var(--border);flex-shrink:0}
-.log-header{padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
-.log-title{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.log-dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.5s infinite}
-.log-box{height:220px;overflow-y:auto;padding:10px 14px;font-family:monospace;font-size:11px;line-height:1.6}
-.log-line{color:#94a3b8;border-bottom:none}
-.log-line.info{color:#60a5fa}
-.log-line.success{color:#34d399}
-.log-line.error{color:#f87171}
-.log-line.warning{color:#fbbf24}
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.info-item{background:var(--surface2);border-radius:8px;padding:10px}
-.info-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.info-value{font-size:13px;font-weight:500;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pipeline-indicator{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
-.running-dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
-.running-dot.active{background:#f59e0b;animation:pulse 1s infinite}
-.empty{text-align:center;padding:40px;color:var(--muted)}
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:200;align-items:center;justify-content:center}
-.modal-overlay.open{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:420px;max-width:95vw}
-.modal h3{font-size:16px;font-weight:700;margin-bottom:12px}
-.modal-input{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px 12px;font-size:13px;font-family:inherit;margin-bottom:12px}
-.modal-input:focus{outline:none;border-color:var(--accent)}
-.modal-actions{display:flex;gap:8px;justify-content:flex-end}
-select.modal-input{cursor:pointer}
-.nav-tabs{display:flex;gap:4px;padding:12px 16px 0;border-bottom:1px solid var(--border)}
-.nav-tab{padding:6px 14px;border-radius:6px 6px 0 0;border:1px solid transparent;border-bottom:none;cursor:pointer;font-size:12px;font-weight:500;color:var(--muted);background:transparent;font-family:inherit}
-.nav-tab.active{background:var(--surface);border-color:var(--border);border-bottom-color:var(--surface);color:var(--text)}
-.tab-content{display:none}
-.tab-content.active{display:block}
-.branch-teaser{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:6px}
-.branch-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
-.branch-a .branch-label{color:var(--blue)}
-.branch-b .branch-label{color:var(--accent)}
-.branch-text{font-size:12px;color:var(--text);line-height:1.4}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>🎬 Pipeline Dashboard v2</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box }
+    :root {
+      --bg:#08080f; --surface:#11111c; --surface2:#1a1a2a; --surface3:#22223a;
+      --border:#252540; --accent:#7c3aed; --accent2:#4f46e5; --accent-glow:rgba(124,58,237,.25);
+      --green:#10b981; --red:#ef4444; --yellow:#f59e0b; --blue:#3b82f6; --orange:#f97316;
+      --text:#e2e8f0; --muted:#64748b; --muted2:#475569;
+    }
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; overflow-x:hidden }
+
+    /* ── Topbar ─────────────────────────────────────── */
+    .topbar {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 24px; background:var(--surface);
+      border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100;
+      backdrop-filter:blur(12px);
+    }
+    .logo { font-size:16px; font-weight:700; background:linear-gradient(135deg,#7c3aed,#4f46e5); -webkit-background-clip:text; -webkit-text-fill-color:transparent; white-space:nowrap }
+    .topbar-center { display:flex; align-items:center; gap:16px; flex:1; justify-content:center }
+    .topbar-right { display:flex; align-items:center; gap:10px }
+
+    /* Progress bar in topbar */
+    .progress-wrap { display:none; align-items:center; gap:10px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:6px 14px; min-width:280px }
+    .progress-wrap.visible { display:flex }
+    .progress-label { font-size:12px; color:var(--muted); white-space:nowrap }
+    .progress-bar-outer { flex:1; height:6px; border-radius:3px; background:var(--surface3); overflow:hidden }
+    .progress-bar-inner { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--accent),var(--accent2)); transition:width .6s ease; }
+    .progress-pct { font-size:11px; font-weight:600; color:var(--accent); min-width:32px; text-align:right }
+
+    /* Model switcher */
+    .model-switcher { display:flex; align-items:center; gap:6px; font-size:12px }
+    .model-switcher label { color:var(--muted); white-space:nowrap }
+    .model-select {
+      background:var(--surface2); border:1px solid var(--border); color:var(--text);
+      border-radius:6px; padding:4px 8px; font-size:12px; font-family:inherit; cursor:pointer;
+      appearance:none; -webkit-appearance:none;
+    }
+    .model-select:focus { outline:none; border-color:var(--accent) }
+
+    /* Pipeline dot */
+    .pipeline-indicator { display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted) }
+    .running-dot { width:8px; height:8px; border-radius:50%; background:var(--green); transition:.3s }
+    .running-dot.active { background:var(--yellow); animation:pulse 1s infinite }
+
+    /* ── Buttons ────────────────────────────────────── */
+    .btn { padding:7px 14px; border:none; border-radius:8px; cursor:pointer; font-size:12px; font-weight:500; transition:.2s; font-family:inherit }
+    .btn-primary { background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff }
+    .btn-primary:hover { opacity:.85; transform:translateY(-1px) }
+    .btn-ghost { background:var(--surface2); color:var(--text); border:1px solid var(--border) }
+    .btn-ghost:hover { border-color:var(--accent); color:var(--accent) }
+    .btn-danger { background:#450a0a; color:#f87171; border:1px solid #7f1d1d }
+    .btn-danger:hover { background:#7f1d1d }
+    .btn-warning { background:#4a2e0a; color:#fbbf24; border:1px solid #78350f }
+    .btn-warning:hover { background:#78350f }
+    .btn-sm { padding:4px 10px; font-size:11px }
+
+    /* ── Layout ─────────────────────────────────────── */
+    .layout { display:grid; grid-template-columns:1fr 360px; gap:0; height:calc(100vh - 53px) }
+    .main { overflow-y:auto; padding:16px }
+    .sidebar { border-left:1px solid var(--border); display:flex; flex-direction:column; height:100%; overflow:hidden }
+
+    /* ── Stats ──────────────────────────────────────── */
+    .stats { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; margin-bottom:16px }
+    .stat-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px; text-align:center; transition:.2s }
+    .stat-card:hover { border-color:var(--accent); transform:translateY(-1px) }
+    .stat-card .num { font-size:24px; font-weight:700; line-height:1 }
+    .stat-card .label { font-size:10px; color:var(--muted); margin-top:3px; text-transform:uppercase; letter-spacing:.5px }
+
+    /* ── Toolbar ─────────────────────────────────────── */
+    .toolbar { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center }
+    .filter-bar { display:flex; gap:6px; flex-wrap:wrap }
+    .filter-btn { padding:4px 12px; border-radius:99px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; font-size:11px; transition:.2s }
+    .filter-btn.active,.filter-btn:hover { background:var(--accent); color:#fff; border-color:var(--accent) }
+
+    /* ── Episode cards ──────────────────────────────── */
+    .ep-list { display:flex; flex-direction:column; gap:8px }
+    .ep-card {
+      background:var(--surface); border:1px solid var(--border); border-radius:10px;
+      padding:14px; cursor:pointer; transition:.2s; position:relative; overflow:hidden;
+    }
+    .ep-card:hover { border-color:var(--accent); transform:translateY(-1px) }
+    .ep-card.selected { border-color:var(--accent); background:var(--surface2) }
+    .ep-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:3px 0 0 3px }
+    .ep-card.status-voting::before { background:var(--blue) }
+    .ep-card.status-pending_review::before { background:var(--yellow); animation:pulse 1.5s infinite }
+    .ep-card.status-generating::before,.ep-card.status-generating_assets::before,.ep-card.status-generating_images::before,.ep-card.status-generating_videos::before,.ep-card.status-generating_audio_and_compile::before { background:var(--accent); animation:pulse 1.5s infinite }
+    .ep-card.status-completed::before { background:var(--green) }
+    .ep-card.status-published::before { background:#4ade80 }
+    .ep-card.status-failed::before { background:var(--red) }
+
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    .ep-header { display:flex; align-items:center; gap:8px; margin-bottom:6px }
+    .ep-tag { font-size:10px; font-weight:600; color:var(--muted); font-family:monospace }
+    .ep-title { font-size:13px; font-weight:600; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis }
+    .cost-badge { font-size:10px; padding:2px 7px; border-radius:99px; background:rgba(16,185,129,.12); color:var(--green); border:1px solid rgba(16,185,129,.2); white-space:nowrap }
+    .ep-meta { display:flex; gap:10px; font-size:10px; color:var(--muted); align-items:center }
+    .vote-bar { display:flex; height:3px; border-radius:2px; overflow:hidden; margin-top:6px; background:var(--surface2) }
+    .vote-a { background:var(--blue); transition:width .5s }
+    .vote-b { background:var(--accent); transition:width .5s }
+
+    /* Badge */
+    .badge { padding:3px 8px; border-radius:99px; font-size:10px; font-weight:600 }
+    .badge-voting { background:#1e3a5f; color:#60a5fa }
+    .badge-pending_review,.badge-pending_image_review,.badge-pending_video_review,.badge-pending_publish { background:#4a2e0a; color:#f59e0b; animation:pulse 2s infinite }
+    .badge-generating,.badge-generating_script,.badge-generating_images,.badge-generating_videos,.badge-generating_audio_and_compile { background:#2d1b69; color:#a78bfa; animation:pulse 2s infinite }
+    .badge-completed { background:#064e3b; color:#34d399 }
+    .badge-published { background:#1a3a1a; color:#4ade80 }
+    .badge-failed { background:#450a0a; color:#f87171 }
+
+    /* ── Accordion detail ───────────────────────────── */
+    .accordion { display:none; background:var(--bg); border:1px solid var(--border); border-top:none; border-radius:0 0 10px 10px; padding:16px; margin-top:-10px; margin-bottom:10px }
+    .accordion.open { display:block }
+    .detail-actions { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px }
+
+    /* Scene cards */
+    .scene-grid { display:flex; flex-direction:column; gap:14px }
+    .scene-card { background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:14px }
+    .scene-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+    .scene-num { font-size:10px; font-weight:700; color:var(--accent); font-family:monospace }
+    .scene-dialogue { font-size:13px; font-weight:500; margin:4px 0 8px; line-height:1.5 }
+    .scene-prompt { font-size:11px; color:var(--muted); line-height:1.4; font-family:monospace; background:var(--bg); padding:6px 8px; border-radius:6px; margin-bottom:10px }
+    .scene-media { display:grid; grid-template-columns:1fr 1fr; gap:8px }
+    .scene-media.single { grid-template-columns:1fr }
+    .scene-media img,.scene-media video { width:100%; border-radius:6px; background:#000 }
+
+    /* Error box */
+    .error-box { background:#450a0a; border:1px solid #7f1d1d; border-radius:8px; padding:12px; font-size:12px; color:#f87171; line-height:1.5; margin-bottom:12px }
+
+    /* Rerun modal panel */
+    .rerun-panel { background:var(--surface3); border:1px solid var(--border); border-radius:8px; padding:12px; margin-top:10px }
+    .rerun-panel-title { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px }
+    .rerun-buttons { display:flex; gap:6px; flex-wrap:wrap }
+
+    /* ── Sidebar ─────────────────────────────────────── */
+    .log-header { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); flex-shrink:0 }
+    .log-title { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.5px }
+    .log-dot { width:7px; height:7px; border-radius:50%; background:var(--green); animation:pulse 1.5s infinite }
+    .log-filters { display:flex; gap:4px }
+    .log-filter-btn { padding:2px 8px; border-radius:99px; border:1px solid var(--border); background:transparent; color:var(--muted); cursor:pointer; font-size:10px; transition:.2s }
+    .log-filter-btn.active { background:var(--accent); color:#fff; border-color:var(--accent) }
+    .log-box { flex:1; overflow-y:auto; padding:10px 14px; font-family:monospace; font-size:11px; line-height:1.6 }
+    .log-line { color:#94a3b8; padding:1px 0; white-space:pre-wrap; word-break:break-all }
+    .log-line.success { color:#34d399 }
+    .log-line.error,.log-line.fail { color:#f87171 }
+    .log-line.warning { color:#fbbf24 }
+    .log-line.info { color:#60a5fa }
+    .log-line.hidden { display:none }
+
+    /* ── Modals ──────────────────────────────────────── */
+    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.75); z-index:200; align-items:center; justify-content:center }
+    .modal-overlay.open { display:flex }
+    .modal { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:22px; width:420px; max-width:95vw }
+    .modal h3 { font-size:15px; font-weight:700; margin-bottom:12px }
+    .modal-input { width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:8px; padding:9px 12px; font-size:13px; font-family:inherit; margin-bottom:12px }
+    .modal-input:focus { outline:none; border-color:var(--accent) }
+    .modal-actions { display:flex; gap:8px; justify-content:flex-end }
+    select.modal-input { cursor:pointer }
+
+    .empty { text-align:center; padding:40px; color:var(--muted) }
+  </style>
 </head>
 <body>
 
+<!-- ── Topbar ──────────────────────────────────────────── -->
 <div class="topbar">
-  <div class="logo">🎬 Pipeline Dashboard</div>
-  <div style="display:flex;align-items:center;gap:16px">
+  <div class="logo">🎬 Pipeline v2</div>
+
+  <div class="topbar-center">
+    <!-- Synthesis progress -->
+    <div class="progress-wrap" id="progressWrap">
+      <span id="progressEp" style="font-size:10px;color:var(--muted);font-family:monospace;white-space:nowrap"></span>
+      <span class="progress-label" id="progressLabel">处理中…</span>
+      <div class="progress-bar-outer"><div class="progress-bar-inner" id="progressBar" style="width:0%"></div></div>
+      <span class="progress-pct" id="progressPct">0%</span>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <!-- Model switcher -->
+    <div class="model-switcher">
+      <label>视频模型:</label>
+      <select class="model-select" id="modelSelect" onchange="changeProvider(this.value)">
+        <option value="local">本地 (免费)</option>
+        <option value="aliyun">阿里云 Wan 2.7</option>
+        <option value="zhipu">智谱 Flash</option>
+        <option value="kling">可灵 Kling</option>
+        <option value="hailuo">海螺 Hailuo</option>
+      </select>
+    </div>
+
+    <!-- Pipeline status -->
     <div class="pipeline-indicator">
       <div class="running-dot" id="pipelineDot"></div>
       <span id="pipelineStatus">Idle</span>
     </div>
-    <button class="btn btn-primary" onclick="openRunModal()">▶ 立即运行</button>
+
+    <button class="btn btn-primary" onclick="openRunModal()">▶ 运行</button>
   </div>
 </div>
 
+<!-- ── Main layout ─────────────────────────────────────── -->
 <div class="layout">
   <div class="main">
+
+    <!-- Stats -->
     <div class="stats" id="statsGrid">
       <div class="stat-card"><div class="num" id="st-total">—</div><div class="label">总集数</div></div>
       <div class="stat-card"><div class="num" id="st-voting" style="color:var(--blue)">—</div><div class="label">投票中</div></div>
@@ -132,12 +220,13 @@ select.modal-input{cursor:pointer}
       <div class="stat-card"><div class="num" id="st-failed" style="color:var(--red)">—</div><div class="label">失败</div></div>
     </div>
 
+    <!-- Toolbar -->
     <div class="toolbar">
       <div class="filter-bar">
         <button class="filter-btn active" onclick="setFilter(this,'')">全部</button>
         <button class="filter-btn" onclick="setFilter(this,'VOTING')">投票中</button>
         <button class="filter-btn" onclick="setFilter(this,'PENDING_REVIEW')">待审核</button>
-        <button class="filter-btn" onclick="setFilter(this,'GENERATING')">生成中</button>
+        <button class="filter-btn" onclick="setFilter(this,'GENERATING_IMAGES')">生成中</button>
         <button class="filter-btn" onclick="setFilter(this,'COMPLETED')">待发布</button>
         <button class="filter-btn" onclick="setFilter(this,'PUBLISHED')">已发布</button>
         <button class="filter-btn" onclick="setFilter(this,'FAILED')">失败</button>
@@ -145,34 +234,32 @@ select.modal-input{cursor:pointer}
       <button class="btn btn-ghost btn-sm" onclick="loadEpisodes()">🔄 刷新</button>
     </div>
 
-    <div class="ep-list" id="epList">
-      <div class="empty">加载中…</div>
-    </div>
+    <!-- Episode list -->
+    <div class="ep-list" id="epList"><div class="empty">加载中…</div></div>
   </div>
 
+  <!-- ── Sidebar ─────────────────────────────────────── -->
   <div class="sidebar">
-    <div class="nav-tabs">
-      <button class="nav-tab active" onclick="switchSideTab(this,'detail')">详情</button>
-      <button class="nav-tab" onclick="switchSideTab(this,'logs')">实时日志</button>
-    </div>
-
-    <div id="tab-detail" class="tab-content active" style="flex:1;overflow-y:auto">
-      <div class="detail-panel" id="detailPanel">
-        <div class="empty" style="margin-top:60px">← 点击左侧集卡片查看详情</div>
+    <div class="log-header">
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="log-dot"></div>
+        <span class="log-title">实时日志</span>
+      </div>
+      <div class="log-filters">
+        <button class="log-filter-btn active" onclick="setLogFilter('all',this)">全部</button>
+        <button class="log-filter-btn" onclick="setLogFilter('error',this)">错误</button>
+        <button class="log-filter-btn" onclick="setLogFilter('success',this)">成功</button>
       </div>
     </div>
-
-    <div id="tab-logs" class="tab-content" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
-      <div style="flex:1;overflow-y:auto;padding:12px 14px;font-family:monospace;font-size:11px;line-height:1.6" id="logBox"></div>
-    </div>
+    <div class="log-box" id="logBox"></div>
   </div>
 </div>
 
-<!-- Run Modal -->
+<!-- ── Run Modal ───────────────────────────────────────── -->
 <div class="modal-overlay" id="runModal">
   <div class="modal">
-    <h3>▶ 立即触发流水线</h3>
-    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">强制分支（可选，留空则使用投票结果）</label>
+    <h3>▶ 触发流水线</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">强制分支（可选）</label>
     <select class="modal-input" id="branchSelect">
       <option value="">自动（根据投票）</option>
       <option value="A">强制 A 分支</option>
@@ -185,249 +272,418 @@ select.modal-input{cursor:pointer}
   </div>
 </div>
 
+<!-- ── Publish Modal ───────────────────────────────────── -->
+<div class="modal-overlay" id="publishModal">
+  <div class="modal">
+    <h3>🚀 多平台分发</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:12px">选择发布平台：</label>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cbDouyin" value="douyin" checked><span>抖音 (Douyin)</span></label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cbKuaishou" value="kuaishou" checked><span>快手 (Kuaishou)</span></label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cbX" value="x"><span>X (Twitter) 带投票</span></label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="cbTiktok" value="tiktok"><span>TikTok (海外)</span></label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePublishModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmPublish()">确认发布</button>
+    </div>
+  </div>
+</div>
+
 <script>
-const API = '';
-let currentFilter = '';
-let selectedId = null;
-let ws = null;
+  const API = '';
+  let currentFilter = '';
+  let selectedId = null;
+  let ws = null;
+  let currentLogFilter = 'all';
+  let publishTargetId = null;
 
-// ── Init ──────────────────────────────────────────────────
-window.onload = () => {
-  loadStats();
-  loadEpisodes();
-  connectLogs();
-  setInterval(()=>{ loadStats(); pollPipeline(); }, 5000);
-};
-
-// ── Stats ──────────────────────────────────────────────────
-async function loadStats() {
-  const r = await fetch('/api/stats').then(r=>r.json()).catch(()=>null);
-  if (!r) return;
-  document.getElementById('st-total').textContent = r.total;
-  document.getElementById('st-voting').textContent = r.voting;
-  document.getElementById('st-pending').textContent = r.pending_review;
-  document.getElementById('st-generating').textContent = r.generating;
-  document.getElementById('st-published').textContent = r.published;
-  document.getElementById('st-failed').textContent = r.failed;
-}
-
-// ── Pipeline status ────────────────────────────────────────
-async function pollPipeline() {
-  const r = await fetch('/api/pipeline/status').then(r=>r.json()).catch(()=>null);
-  if (!r) return;
-  const dot = document.getElementById('pipelineDot');
-  const txt = document.getElementById('pipelineStatus');
-  if (r.running) {
-    dot.classList.add('active');
-    txt.textContent = '运行中…';
-  } else {
-    dot.classList.remove('active');
-    txt.textContent = 'Idle';
-  }
-}
-
-// ── Episodes ───────────────────────────────────────────────
-async function loadEpisodes() {
-  const url = currentFilter ? `/api/episodes?status=${currentFilter}` : '/api/episodes';
-  const r = await fetch(url).then(r=>r.json()).catch(()=>null);
-  if (!r) return;
-  const el = document.getElementById('epList');
-  if (!r.items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
-  el.innerHTML = r.items.map(ep => {
-    const total = ep.vote_a_count + ep.vote_b_count || 1;
-    const pctA = Math.round(ep.vote_a_count / total * 100);
-    return `
-    <div class="ep-card status-${ep.status.toLowerCase()} ${selectedId===ep.id?'selected':''}" onclick="selectEp(${ep.id})">
-      <div class="ep-header">
-        <span class="ep-tag">${ep.episode_tag}</span>
-        <span class="ep-title">${ep.title || '（未命名）'}</span>
-        <span class="badge badge-${ep.status.toLowerCase()}">${statusLabel(ep.status)}</span>
-      </div>
-      <div class="ep-meta">
-        <span>🗳 A:${ep.vote_a_count} B:${ep.vote_b_count}</span>
-        ${ep.chosen_branch ? `<span>分支:${ep.chosen_branch}</span>` : ''}
-        ${ep.error_stage ? `<span style="color:var(--red)">⚠ ${ep.error_stage}</span>` : ''}
-        <span style="margin-left:auto">${timeAgo(ep.updated_at)}</span>
-      </div>
-      <div class="vote-bar">
-        <div class="vote-a" style="width:${pctA}%"></div>
-        <div class="vote-b" style="width:${100-pctA}%"></div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function setFilter(btn, val) {
-  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  currentFilter = val;
-  loadEpisodes();
-}
-
-// ── Detail ────────────────────────────────────────────────
-async function selectEp(id) {
-  selectedId = id;
-  loadEpisodes();
-  const ep = await fetch(`/api/episodes/${id}`).then(r=>r.json()).catch(()=>null);
-  if (!ep) return;
-  switchSideTab(document.querySelector('.nav-tab'), 'detail');
-  const p = document.getElementById('detailPanel');
-
-  const scenes = ep.script_parsed?.scenes || [];
-  const branches = ep.script_parsed?.next_branches || {};
-  const isFailed = ep.status === 'FAILED';
-  const isCompleted = ep.status === 'COMPLETED';
-  const isPendingReview = ep.status === 'PENDING_REVIEW';
-
-  p.innerHTML = `
-    <div class="detail-header">
-      <div class="detail-tag">${ep.episode_tag} · 重试${ep.retry_count}次</div>
-      <div class="detail-title">${ep.title || '（未命名）'} <span class="badge badge-${ep.status.toLowerCase()}">${statusLabel(ep.status)}</span></div>
-    </div>
-
-    <div class="detail-actions">
-      ${isPendingReview ? `<button class="btn btn-primary btn-sm" style="background:var(--yellow);color:#000" onclick="doApproveReview(${id})">✅ 批准剧本</button>` : ''}
-      ${isFailed ? `<button class="btn btn-ghost btn-sm" onclick="doRetry(${id})">🔄 重试</button>` : ''}
-      ${isCompleted ? `<button class="btn btn-primary btn-sm" onclick="doPublish(${id})">🚀 批准发布</button>` : ''}
-      <button class="btn btn-ghost btn-sm" onclick="openBranchModal(${id})">⚡ 强制分支</button>
-      ${ep.douyin_video_url ? `<a href="${ep.douyin_video_url}" target="_blank" class="btn btn-ghost btn-sm">🔗 查看</a>` : ''}
-    </div>
-
-    ${isFailed ? `<div class="error-box">⚠ 失败于 <strong>${ep.error_stage||'?'}</strong><br>${ep.error_message||''}</div><br>` : ''}
-
-    <div class="section">
-      <div class="section-title">📊 投票数据</div>
-      <div class="info-grid">
-        <div class="info-item"><div class="info-label">A 票</div><div class="info-value" style="color:var(--blue)">${ep.vote_a_count}</div></div>
-        <div class="info-item"><div class="info-label">B 票</div><div class="info-value" style="color:var(--accent)">${ep.vote_b_count}</div></div>
-        <div class="info-item"><div class="info-label">选择分支</div><div class="info-value">${ep.chosen_branch||'—'}</div></div>
-        <div class="info-item"><div class="info-label">状态</div><div class="info-value">${statusLabel(ep.status)}</div></div>
-      </div>
-    </div>
-
-    ${scenes.length ? `
-    <div class="section">
-      <div class="section-title">🎬 分镜剧本 (${scenes.length}个)</div>
-      ${scenes.map(s=>`
-        <div class="scene-card">
-          <div class="scene-num">SCENE ${s.scene_index} · ${s.speaker||'旁白'} · ${s.emotion}</div>
-          <div class="scene-dialogue">${s.dialogue}</div>
-          <div class="scene-prompt">${s.visual_prompt}</div>
-        </div>`).join('')}
-    </div>` : ''}
-
-    ${(branches.branch_a_teaser||branches.branch_b_teaser) ? `
-    <div class="section">
-      <div class="section-title">🔀 下集分支预告</div>
-      <div class="branch-teaser branch-a"><div class="branch-label">选择 A</div><div class="branch-text">${branches.branch_a_teaser||''}</div></div>
-      <div class="branch-teaser branch-b"><div class="branch-label">选择 B</div><div class="branch-text">${branches.branch_b_teaser||''}</div></div>
-    </div>` : ''}
-
-    ${ep.asset_manifest ? `
-    <div class="section">
-      <div class="section-title">📁 资产清单</div>
-      <div class="info-grid">
-        <div class="info-item"><div class="info-label">图片</div><div class="info-value">${Object.keys(ep.asset_manifest.images||{}).length} 张</div></div>
-        <div class="info-item"><div class="info-label">视频片段</div><div class="info-value">${Object.keys(ep.asset_manifest.clips||{}).length} 个</div></div>
-        <div class="info-item"><div class="info-label">音频</div><div class="info-value">${Object.keys(ep.asset_manifest.audio||{}).length} 轨</div></div>
-        <div class="info-item"><div class="info-label">成品视频</div><div class="info-value">${ep.has_video?'✅':'—'}</div></div>
-      </div>
-    </div>` : ''}
-  `;
-}
-
-// ── Actions ───────────────────────────────────────────────
-async function doRetry(id) {
-  if (!confirm('确认重试此集？')) return;
-  const r = await fetch(`/api/episodes/${id}/retry`, {method:'POST'}).then(r=>r.json());
-  alert(r.message);
-  loadEpisodes();
-}
-
-async function doPublish(id) {
-  if (!confirm('确认批准发布此集至抖音？')) return;
-  const r = await fetch(`/api/episodes/${id}/approve-publish`, {method:'POST'}).then(r=>r.json());
-  alert(r.message);
-  loadEpisodes();
-}
-
-async function doApproveReview(id) {
-  if (!confirm('确认剧本内容无误，允许继续生成资产并扣除费用？')) return;
-  const r = await fetch(`/api/episodes/${id}/approve-review`, {method:'POST'}).then(r=>r.json()).catch(e=>({message:e.toString()}));
-  alert(r.message || r.detail);
-  loadEpisodes();
-}
-
-let branchTargetId = null;
-function openBranchModal(id) {
-  branchTargetId = id;
-  document.getElementById('runModal').classList.add('open');
-}
-
-async function triggerPipeline() {
-  const branch = document.getElementById('branchSelect').value;
-  const r = await fetch('/api/pipeline/run', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({branch_override: branch||null})
-  }).then(r=>r.json()).catch(e=>({message:e.toString()}));
-  closeRunModal();
-  alert(r.message||r.detail);
-  pollPipeline();
-}
-
-function openRunModal() { document.getElementById('runModal').classList.add('open'); }
-function closeRunModal() { document.getElementById('runModal').classList.remove('open'); }
-document.getElementById('runModal').addEventListener('click', e=>{ if(e.target===e.currentTarget) closeRunModal(); });
-
-// ── Logs WebSocket ─────────────────────────────────────────
-function connectLogs() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/logs`);
-  ws.onmessage = e => {
-    const data = JSON.parse(e.data);
-    appendLogs(data.lines);
+  // ── Init ──────────────────────────────────────────────
+  window.onload = () => {
+    loadStats();
+    loadEpisodes();
+    connectLogs();
+    loadSettings();
+    setInterval(() => { loadStats(); pollPipeline(); pollProgress(); }, 5000);
+    connectProgressWS();
   };
-  ws.onclose = () => setTimeout(connectLogs, 3000);
-}
 
-function appendLogs(lines) {
-  const box = document.getElementById('logBox');
-  lines.forEach(l => {
-    const d = document.createElement('div');
-    d.style.cssText = 'padding:1px 0;white-space:pre-wrap;word-break:break-all';
-    if (l.includes('SUCCESS') || l.includes('✓')) d.style.color = '#34d399';
-    else if (l.includes('ERROR') || l.includes('FAILED') || l.includes('✗')) d.style.color = '#f87171';
-    else if (l.includes('WARNING')) d.style.color = '#fbbf24';
-    else if (l.includes('INFO')) d.style.color = '#60a5fa';
-    else d.style.color = '#94a3b8';
-    d.textContent = l;
-    box.appendChild(d);
-  });
-  box.scrollTop = box.scrollHeight;
-}
+  // ── Stats ─────────────────────────────────────────────
+  async function loadStats() {
+    const r = await fetch('/api/stats').then(r => r.json()).catch(() => null);
+    if (!r) return;
+    document.getElementById('st-total').textContent = r.total;
+    document.getElementById('st-voting').textContent = r.voting;
+    document.getElementById('st-pending').textContent = r.pending_review;
+    document.getElementById('st-generating').textContent = r.generating;
+    document.getElementById('st-published').textContent = r.published;
+    document.getElementById('st-failed').textContent = r.failed;
+  }
 
-// ── Utils ──────────────────────────────────────────────────
-function statusLabel(s) {
-  return {VOTING:'投票中',GENERATING_SCRIPT:'生剧本',PENDING_REVIEW:'待审核',GENERATING_ASSETS:'生资产',GENERATING:'生成中',COMPLETED:'待发布',PUBLISHED:'已发布',FAILED:'失败'}[s] || s;
-}
+  // ── Settings / Model switcher ─────────────────────────
+  async function loadSettings() {
+    const r = await fetch('/api/settings').then(r => r.json()).catch(() => null);
+    if (!r) return;
+    document.getElementById('modelSelect').value = r.video_provider || 'local';
+  }
 
-function timeAgo(iso) {
-  if (!iso) return '';
-  const d = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (d < 60) return `${d}秒前`;
-  if (d < 3600) return `${Math.floor(d/60)}分钟前`;
-  if (d < 86400) return `${Math.floor(d/3600)}小时前`;
-  return `${Math.floor(d/86400)}天前`;
-}
+  async function changeProvider(val) {
+    const r = await fetch('/api/settings', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ video_provider: val })
+    }).then(r => r.json()).catch(e => ({message:e.toString()}));
+    // Brief toast
+    showToast(r.message || '已更新');
+    loadEpisodes();
+  }
 
-function switchSideTab(btn, name) {
-  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(t=>{ t.classList.remove('active'); t.style.display='none'; });
-  if (btn) btn.classList.add('active');
-  const el = document.getElementById('tab-'+name);
-  if (el) { el.classList.add('active'); el.style.display='flex'; el.style.flexDirection='column'; }
-}
+  function showToast(msg, isError=false) {
+    const t = document.createElement('div');
+    t.style.cssText = `position:fixed;bottom:24px;right:24px;background:${isError?'#450a0a':'#064e3b'};color:${isError?'#f87171':'#34d399'};border:1px solid ${isError?'#7f1d1d':'#065f46'};border-radius:8px;padding:10px 16px;font-size:13px;z-index:9999;max-width:320px;box-shadow:0 4px 20px rgba(0,0,0,.4)`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  // ── Pipeline status ───────────────────────────────────
+  async function pollPipeline() {
+    const r = await fetch('/api/pipeline/status').then(r => r.json()).catch(() => null);
+    if (!r) return;
+    const dot = document.getElementById('pipelineDot');
+    const txt = document.getElementById('pipelineStatus');
+    if (r.running) {
+      dot.classList.add('active');
+      txt.textContent = '运行中…';
+    } else {
+      dot.classList.remove('active');
+      txt.textContent = 'Idle';
+    }
+  }
+
+
+  // ── Synthesis progress (WebSocket) ────────────────────
+  let progressWs = null;
+  function connectProgressWS() {
+    if (progressWs) return;
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws/progress`;
+    progressWs = new WebSocket(wsUrl);
+    
+    progressWs.onmessage = (e) => {
+      try {
+        const p = JSON.parse(e.data);
+        const wrap = document.getElementById('progressWrap');
+        if (p.active) {
+          wrap.classList.add('visible');
+          document.getElementById('progressLabel').textContent = p.step_name;
+          document.getElementById('progressBar').style.width = p.pct + '%';
+          document.getElementById('progressPct').textContent = p.pct + '%';
+          const epEl = document.getElementById('progressEp');
+          if (epEl && p.episode) epEl.textContent = p.episode;
+        } else {
+          wrap.classList.remove('visible');
+        }
+      } catch (err) {}
+    };
+
+    progressWs.onclose = () => {
+      progressWs = null;
+      setTimeout(connectProgressWS, 3000); // auto reconnect
+    };
+  }
+
+  // ── Synthesis progress ────────────────────────────────
+  async function pollProgress() {
+    // 直接调用 /api/pipeline/progress，它自己判断是否有活跃集数
+    const p = await fetch('/api/pipeline/progress').then(r => r.json()).catch(() => null);
+    if (!p) return;
+
+    const wrap = document.getElementById('progressWrap');
+    if (p.active) {
+      wrap.classList.add('visible');
+      document.getElementById('progressLabel').textContent = p.step_name;
+      document.getElementById('progressBar').style.width = p.pct + '%';
+      document.getElementById('progressPct').textContent = p.pct + '%';
+      const epEl = document.getElementById('progressEp');
+      if (epEl && p.episode) epEl.textContent = p.episode;
+    } else {
+      wrap.classList.remove('visible');
+    }
+  }
+
+  // ── Episodes ──────────────────────────────────────────
+  async function loadEpisodes() {
+    const url = currentFilter ? `/api/episodes?status=${currentFilter}` : '/api/episodes';
+    const r = await fetch(url).then(r => r.json()).catch(() => null);
+    if (!r) return;
+    const el = document.getElementById('epList');
+    if (!r.items.length) { el.innerHTML = '<div class="empty">暂无数据</div>'; return; }
+    el.innerHTML = r.items.map(ep => {
+      const total = ep.vote_a_count + ep.vote_b_count || 1;
+      const pctA = Math.round(ep.vote_a_count / total * 100);
+      const statusClass = ep.status.toLowerCase().replace(/_/g,'-');
+      const costTxt = ep.estimated_cost > 0 ? `≈ ¥${ep.estimated_cost.toFixed(2)}` : '免费';
+      return `
+      <div class="ep-card status-${statusClass} ${selectedId===ep.id?'selected':''}" onclick="selectEp(${ep.id})">
+        <div class="ep-header">
+          <span class="ep-tag">${ep.episode_tag}</span>
+          <span class="ep-title">${ep.title||'（未命名）'}</span>
+          <span class="cost-badge">${costTxt}</span>
+          <span class="badge badge-${statusClass}">${statusLabel(ep.status)}</span>
+        </div>
+        <div class="ep-meta">
+          <span>🗳 A:${ep.vote_a_count} B:${ep.vote_b_count}</span>
+          ${ep.chosen_branch?`<span>分支:${ep.chosen_branch}</span>`:''}
+          ${ep.error_stage?`<span style="color:var(--red)">⚠ ${ep.error_stage}</span>`:''}
+          <span style="margin-left:auto">${timeAgo(ep.updated_at)}</span>
+        </div>
+        <div class="vote-bar">
+          <div class="vote-a" style="width:${pctA}%"></div>
+          <div class="vote-b" style="width:${100-pctA}%"></div>
+        </div>
+      </div>
+      <div id="accordion-${ep.id}" class="accordion ${selectedId===ep.id?'open':''}"></div>`;
+    }).join('');
+  }
+
+  function setFilter(btn, val) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = val;
+    loadEpisodes();
+  }
+
+  // ── Detail / Accordion ────────────────────────────────
+  async function selectEp(id) {
+    if (selectedId === id) { selectedId = null; await loadEpisodes(); return; }
+    selectedId = id;
+    await loadEpisodes();
+    const ep = await fetch(`/api/episodes/${id}`).then(r => r.json()).catch(() => null);
+    if (!ep) return;
+    const container = document.getElementById(`accordion-${id}`);
+    if (!container) return;
+
+    const scenes = ep.script_parsed?.scenes || [];
+    const ts = Date.now();
+    const S = ep.status;
+    const isFailed = S === 'FAILED';
+    const isPendingReview = S === 'PENDING_REVIEW';
+    const isGenImages = S === 'GENERATING_IMAGES';
+    const isPendingImg = S === 'PENDING_IMAGE_REVIEW';
+    const isPendingVid = S === 'PENDING_VIDEO_REVIEW';
+    const isPendingPub = S === 'PENDING_PUBLISH';
+    const isCompleted = S === 'COMPLETED';
+    const hasMedia = ['GENERATING_VIDEOS','PENDING_VIDEO_REVIEW','GENERATING_AUDIO_AND_COMPILE','COMPLETED','PENDING_PUBLISH','PUBLISHED'].includes(S) || isPendingImg || isGenImages;
+
+    container.innerHTML = `
+      ${isFailed ? `<div class="error-box">⚠ 失败于 <strong>${ep.error_stage||'?'}</strong><br>${ep.error_message||''}</div>` : ''}
+
+      <div class="detail-actions">
+        ${isPendingReview ? `<button class="btn btn-warning btn-sm" onclick="doApproveReview(${id})">✅ 批准剧本</button>` : ''}
+        ${isPendingImg ? `<button class="btn btn-primary btn-sm" onclick="doApproveImages(${id})">✅ 批准全部图片</button>` : ''}
+        ${(isGenImages||isPendingImg) ? `<button class="btn btn-danger btn-sm" onclick="doRejectAllImages(${id})">❌ 全部重绘</button>` : ''}
+        ${isPendingVid ? `<button class="btn btn-primary btn-sm" onclick="doApproveVideos(${id})">✅ 批准全部视频</button>` : ''}
+        ${(isCompleted||isPendingPub) ? `<button class="btn btn-primary btn-sm" onclick="openPublishModal(${id})">🚀 分发</button>` : ''}
+        ${ep.douyin_video_url ? `<a href="${ep.douyin_video_url}" target="_blank" class="btn btn-ghost btn-sm">🔗 查看</a>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="openBranchModal(${id})">⚡ 强制分支</button>
+      </div>
+
+      ${(isCompleted || isPendingPub || S === 'PUBLISHED') ? `
+      <div style="margin-top:14px; background:#000; border-radius:8px; overflow:hidden; border:1px solid var(--border);">
+        <div style="padding:8px 12px; font-size:12px; font-weight:600; color:#fff; background:var(--surface2); border-bottom:1px solid var(--border);">
+          🎥 最终合成视频预览
+        </div>
+        <video controls style="width:100%; display:block;" src="/outputs/${ep.episode_tag}/${ep.episode_tag}_douyin_v2.mp4?t=${ts}"></video>
+      </div>` : ''}
+
+      <!-- 发布后数据追踪面板 -->
+      ${S === 'PUBLISHED' ? `
+      <div style="margin-top:14px; background:var(--surface2); border-radius:8px; padding:12px; border:1px solid var(--border);">
+        <div style="font-size:12px; font-weight:600; color:var(--text); margin-bottom:10px;">📊 播放数据效果追踪</div>
+        <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:10px;">
+          <div style="background:var(--bg); padding:10px; border-radius:6px; text-align:center;">
+            <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">播放量</div>
+            <div style="font-size:16px; font-weight:700; color:var(--accent);">${ep.views_count != null ? ep.views_count.toLocaleString() : '-'}</div>
+          </div>
+          <div style="background:var(--bg); padding:10px; border-radius:6px; text-align:center;">
+            <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">点赞数</div>
+            <div style="font-size:16px; font-weight:700; color:var(--green);">${ep.likes_count != null ? ep.likes_count.toLocaleString() : '-'}</div>
+          </div>
+          <div style="background:var(--bg); padding:10px; border-radius:6px; text-align:center;">
+            <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">完播率</div>
+            <div style="font-size:16px; font-weight:700; color:var(--text);">${ep.completion_rate != null ? (ep.completion_rate * 100).toFixed(1) + '%' : '-'}</div>
+          </div>
+          <div style="background:var(--bg); padding:10px; border-radius:6px; text-align:center;">
+            <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">5秒留存</div>
+            <div style="font-size:16px; font-weight:700; color:var(--text);">${ep.five_sec_retention != null ? (ep.five_sec_retention * 100).toFixed(1) + '%' : '-'}</div>
+          </div>
+        </div>
+      </div>` : ''}
+
+      <!-- 一键重跑面板 -->
+      <div class="rerun-panel">
+        <div class="rerun-panel-title">🔄 从指定阶段重跑</div>
+        <div class="rerun-buttons">
+          <button class="btn btn-ghost btn-sm" onclick="doRerun(${id},'script')">剧本</button>
+          <button class="btn btn-ghost btn-sm" onclick="doRerun(${id},'images')">图片</button>
+          <button class="btn btn-ghost btn-sm" onclick="doRerun(${id},'videos')">视频</button>
+          <button class="btn btn-warning btn-sm" onclick="doRerun(${id},'audio')">音频合成</button>
+        </div>
+      </div>
+
+      ${scenes.length > 0 ? `
+      <div class="scene-grid" style="margin-top:14px">
+        ${scenes.map(s => {
+          const idx = s.scene_index;
+          const hasImg = hasMedia;
+          const hasVid = ep.asset_manifest?.clips?.[idx];
+          const bothMedia = hasImg && hasVid;
+          return `
+          <div class="scene-card">
+            <div class="scene-head">
+              <span class="scene-num">SCENE ${idx} · ${s.speaker||'旁白'} · ${s.emotion}</span>
+              <div style="display:flex;gap:6px">
+                ${isPendingImg ? `<button class="btn btn-danger btn-sm" onclick="doRejectImage(${id},${idx})">❌ 重绘</button>` : ''}
+                ${isPendingVid&&hasVid ? `<button class="btn btn-danger btn-sm" onclick="doRejectVideo(${id},${idx})">❌ 重做</button>` : ''}
+              </div>
+            </div>
+            <div class="scene-dialogue">${s.dialogue}</div>
+            <div class="scene-prompt">${s.visual_prompt}</div>
+            <div class="scene-media ${bothMedia?'':'single'}">
+              ${hasImg ? `<img src="/media/${ep.episode_tag}/images/scene_${String(idx).padStart(2,'0')}.png?t=${ts}" onerror="this.style.display='none'">` : ''}
+              ${hasVid ? `<video src="/media/${ep.episode_tag}/clips/scene_${String(idx).padStart(2,'0')}.mp4" controls loop muted></video>` : ''}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+    `;
+  }
+
+  // ── Actions ───────────────────────────────────────────
+  async function doApproveReview(id) {
+    if (!confirm('确认剧本无误，允许继续生成资产？')) return;
+    const r = await fetch(`/api/episodes/${id}/approve-review`,{method:'POST'}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doApproveImages(id) {
+    if (!confirm('图片均符合预期？进入视频生成阶段将产生API费用。')) return;
+    const r = await fetch(`/api/episodes/${id}/approve-images`,{method:'POST'}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doApproveVideos(id) {
+    if (!confirm('确认视频动效无崩坏？即将配音合并。')) return;
+    const r = await fetch(`/api/episodes/${id}/approve-videos`,{method:'POST'}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doRejectAllImages(id) {
+    const feedback = prompt('全局重绘意见（例如：背景太亮了）：'); if (!feedback) return;
+    const r = await fetch(`/api/episodes/${id}/reject-all-images`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({feedback})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doRejectImage(id, idx) {
+    const feedback = prompt(`SCENE ${idx} 修改意见：`); if (!feedback) return;
+    const r = await fetch(`/api/episodes/${id}/reject-image`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene_index:idx,feedback})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doRejectVideo(id, idx) {
+    const feedback = prompt(`SCENE ${idx} 视频修改意见：`); if (!feedback) return;
+    const r = await fetch(`/api/episodes/${id}/reject-video`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scene_index:idx,feedback})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+  async function doRerun(id, stage) {
+    const labels = {script:'剧本',images:'图片',videos:'视频',audio:'音频合成'};
+    if (!confirm(`确认从【${labels[stage]}】阶段重跑？这将清除对应阶段的已有产出。`)) return;
+    const r = await fetch(`/api/episodes/${id}/rerun`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+
+  function openPublishModal(id) { publishTargetId=id; document.getElementById('publishModal').classList.add('open'); }
+  function closePublishModal() { document.getElementById('publishModal').classList.remove('open'); }
+  document.getElementById('publishModal').addEventListener('click', e => { if(e.target===e.currentTarget)closePublishModal(); });
+
+  async function confirmPublish() {
+    const platforms = [];
+    if (document.getElementById('cbDouyin').checked) platforms.push('douyin');
+    if (document.getElementById('cbKuaishou').checked) platforms.push('kuaishou');
+    if (document.getElementById('cbX').checked) platforms.push('x');
+    if (document.getElementById('cbTiktok').checked) platforms.push('tiktok');
+    if (!platforms.length) { showToast('请至少选择一个发布平台！', true); return; }
+    closePublishModal();
+    const r = await fetch(`/api/episodes/${publishTargetId}/approve-publish`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platforms})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    showToast(r.message||r.detail, !r.ok); loadEpisodes();
+  }
+
+  function openBranchModal(id) { document.getElementById('runModal').classList.add('open'); }
+  function openRunModal() { document.getElementById('runModal').classList.add('open'); }
+  function closeRunModal() { document.getElementById('runModal').classList.remove('open'); }
+  document.getElementById('runModal').addEventListener('click', e => { if(e.target===e.currentTarget)closeRunModal(); });
+
+  async function triggerPipeline() {
+    const branch = document.getElementById('branchSelect').value;
+    const r = await fetch('/api/pipeline/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({branch_override:branch||null})}).then(r=>r.json()).catch(e=>({message:e.toString()}));
+    closeRunModal(); showToast(r.message||r.detail, !r.ok); pollPipeline();
+  }
+
+  // ── Log WebSocket ─────────────────────────────────────
+  function connectLogs() {
+    const proto = location.protocol==='https:'?'wss':'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws/logs`);
+    ws.onmessage = e => { const d=JSON.parse(e.data); appendLogs(d.lines); };
+    ws.onclose = () => setTimeout(connectLogs, 3000);
+  }
+
+  function appendLogs(lines) {
+    const box = document.getElementById('logBox');
+    lines.forEach(l => {
+      const d = document.createElement('div');
+      d.className = 'log-line';
+      d.style.cssText = 'padding:1px 0';
+      if (l.includes('SUCCESS')||l.includes('✓')) d.classList.add('success');
+      else if (l.includes('ERROR')||l.includes('FAILED')||l.includes('✗')) d.classList.add('error');
+      else if (l.includes('WARNING')) d.classList.add('warning');
+      else if (l.includes('INFO')) d.classList.add('info');
+      d.textContent = l;
+      applyLogFilter(d);
+      box.appendChild(d);
+    });
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setLogFilter(type, btn) {
+    currentLogFilter = type;
+    document.querySelectorAll('.log-filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.log-line').forEach(el => applyLogFilter(el));
+  }
+
+  function applyLogFilter(el) {
+    if (currentLogFilter === 'all') { el.classList.remove('hidden'); return; }
+    if (currentLogFilter === 'error') {
+      el.classList.toggle('hidden', !el.classList.contains('error') && !el.classList.contains('fail'));
+    } else if (currentLogFilter === 'success') {
+      el.classList.toggle('hidden', !el.classList.contains('success'));
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────
+  function statusLabel(s) {
+    return {
+      VOTING:'投票中', GENERATING_SCRIPT:'生剧中',
+      PENDING_REVIEW:'待审剧本', GENERATING_IMAGES:'画图中',
+      PENDING_IMAGE_REVIEW:'待审图片', GENERATING_VIDEOS:'做视频中',
+      PENDING_VIDEO_REVIEW:'待审视频', GENERATING_AUDIO_AND_COMPILE:'合成中',
+      COMPLETED:'待发布', PUBLISHED:'已发布', FAILED:'失败'
+    }[s]||s;
+  }
+
+  function timeAgo(iso) {
+    if(!iso) return '';
+    const d = Math.floor((Date.now()-new Date(iso))/1000);
+    if(d<60) return `${d}秒前`;
+    if(d<3600) return `${Math.floor(d/60)}分钟前`;
+    if(d<86400) return `${Math.floor(d/3600)}小时前`;
+    return `${Math.floor(d/86400)}天前`;
+  }
 </script>
 </body>
 </html>

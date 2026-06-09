@@ -15,11 +15,32 @@ from config.settings import STORAGE_TEMP_DIR, VIDEO_WIDTH, VIDEO_HEIGHT
 
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
 
-def fetch_fallback_video(keyword: str, save_path: Path, min_duration: float = 5.0) -> Path:
+def fetch_fallback_video(keyword: str, save_path: Path, min_duration: float = 5.0, image_path: str = None) -> Path:
     """
     Attempts to fetch a free stock video from Pexels based on the keyword.
-    If it fails or no API key is provided, generates a default scary fallback video via FFmpeg.
+    If it fails, or if an image_path is provided, generates a local cinematic Ken Burns zoom video.
     """
+    import subprocess
+    
+    # If we have an image, bypass Pexels entirely and just animate the image locally!
+    if image_path and Path(image_path).exists():
+        logger.info(f"Generating local cinematic zoom video for {Path(image_path).name} via FFmpeg.")
+        try:
+            # Cinematic slow zoom in, maintaining perfect lighting and character details
+            cmd = [
+                "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
+                "-vf", f"zoompan=z='min(zoom+0.001,1.15)':d={int(min_duration*30)}:x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':s={VIDEO_WIDTH}x{VIDEO_HEIGHT},fps=30",
+                "-c:v", "libx264", "-t", str(min_duration), "-pix_fmt", "yuv420p",
+                "-preset", "fast", "-crf", "18",
+                str(save_path)
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            return save_path
+        except Exception as e:
+            logger.error(f"Failed to generate cinematic zoom: {e}")
+            # Fall through to Pexels if local generation fails
+            pass
+            
     logger.info(f"Triggering Stock Footage Fallback for keyword: '{keyword}'")
     
     if PEXELS_API_KEY:
@@ -47,12 +68,9 @@ def fetch_fallback_video(keyword: str, save_path: Path, min_duration: float = 5.
         except Exception as e:
             logger.warning(f"Pexels fallback failed: {e}. Falling back to generative synthetic video.")
 
-    # Synthetic Fallback: Generate a creepy static or noise pattern using FFmpeg
-    import subprocess
+    # Extreme Fallback: Generate a creepy static or noise pattern using FFmpeg
     logger.info("Generating synthetic fallback video via FFmpeg.")
     try:
-        # Generate a creepy red-tinted noise pattern (simulating a broken TV / paranormal static)
-        # We use simple grain/noise.
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi",
             "-i", f"nullsrc=s={VIDEO_WIDTH}x{VIDEO_HEIGHT}:d={min_duration}:r=30",

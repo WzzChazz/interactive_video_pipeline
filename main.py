@@ -182,7 +182,7 @@ def stage_generate_script(branch: str, episode: Episode) -> dict:
         history_summary=history_summary,
         season_id=episode.season_id,
         episode_number=episode.episode_number,
-        engine="deepseek",
+        engine="auto",
         theme_key=episode.theme_key,
     )
 
@@ -203,51 +203,72 @@ def stage_generate_script(branch: str, episode: Episode) -> dict:
     return json.loads(script_to_json_str(script_obj))
 
 
-def stage_generate_assets(script: dict, episode: Episode) -> dict:
-    """
-    步骤 3&4：并行生成图片（Flux）→ 图生视频（Kling/Runway）→ 配音+音效（ElevenLabs）。
-    三类资产并行生成（视觉线程 + 语音线程），最终汇总进 asset_manifest。
-    """
-    from core.image_gen import generate_images, ImageGenError
-    from core.audio_gen import generate_audio, AudioGenError
-    from core.video_gen import generate_video_clips, VideoGenError
-    from concurrent.futures import ThreadPoolExecutor
+def stage_generate_images(script: dict, episode: Episode) -> dict:
+    from core.image_gen import generate_images
 
     scenes = script.get("scenes", [])
     tag    = episode.episode_tag
-    logger.info("[Stage 3-4/6] Generating assets for {} ({} scenes)...", tag, len(scenes))
+    logger.info("[Stage 3/7] Generating images for {} ({} scenes)...", tag, len(scenes))
 
-    image_manifest: dict[int, str]       = {}
-    audio_manifest: dict[int, dict]      = {}
-    clip_manifest:  dict[int, str]       = {}
-
-    # FAIL FAST 策略：必须先跑完且无报错，才允许跑极其昂贵的视频大模型 API！
-    # 彻底废除并发执行，改为严格串行。
-    logger.info("[Stage 3/6] Generating audio first (Fail-Fast protection)...")
-    audio_manifest = generate_audio(scenes, tag, episode.id, episode.theme_key)
-
-    logger.info("[Stage 3/6] Generating images...")
     image_manifest = generate_images(scenes, tag, None, episode.id)
 
-    logger.info("[Stage 4/6] Image→Video (Executing sequentially to save API costs)...")
-    clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id)
-
-    asset_manifest = {
-        "images": image_manifest,
-        "audio":  audio_manifest,
-        "clips":  clip_manifest,
-    }
-
-    # 持久化 asset_manifest 到 DB
+    # Update DB asset manifest (partial)
     with get_session() as session:
         ep = session.get(Episode, episode.id)
+        if ep:
+            asset_manifest = json.loads(ep.asset_manifest_json or "{}")
+            asset_manifest["images"] = image_manifest
+            ep.asset_manifest_json = json.dumps(asset_manifest, ensure_ascii=False)
+            session.commit()
+
+    logger.success("[Stage 3/7] Image generation complete.")
+    return image_manifest
+
+
+def stage_generate_videos(script: dict, episode: Episode) -> dict:
+    from core.video_gen import generate_video_clips
+
+    scenes = script.get("scenes", [])
+    tag    = episode.episode_tag
+    logger.info("[Stage 4/7] Generating videos for {}...", tag)
+
+    with get_session() as session:
+        ep = session.get(Episode, episode.id)
+        asset_manifest = json.loads(ep.asset_manifest_json or "{}")
+
+    image_manifest = {int(k): v for k, v in asset_manifest.get("images", {}).items()}
+    clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id)
+
+    with get_session() as session:
+        ep = session.get(Episode, episode.id)
+        if ep:
+            asset_manifest = json.loads(ep.asset_manifest_json or "{}")
+            asset_manifest["clips"] = clip_manifest
+            ep.asset_manifest_json = json.dumps(asset_manifest, ensure_ascii=False)
+            session.commit()
+
+    logger.success("[Stage 4/7] Video generation complete.")
+    return clip_manifest
+
+
+def stage_generate_audio_and_compile(script: dict, episode: Episode) -> str:
+    from core.audio_gen import generate_audio
+
+    scenes = script.get("scenes", [])
+    tag    = episode.episode_tag
+    logger.info("[Stage 5/7] Generating audio and compiling final video...")
+
+    audio_manifest = generate_audio(scenes, tag, episode.id, episode.theme_key)
+
+    with get_session() as session:
+        ep = session.get(Episode, episode.id)
+        asset_manifest = json.loads(ep.asset_manifest_json or "{}")
+        asset_manifest["audio"] = audio_manifest
         if ep:
             ep.asset_manifest_json = json.dumps(asset_manifest, ensure_ascii=False)
             session.commit()
 
-    logger.success("[Stage 3-4/6] Assets complete: {} imgs, {} clips, {} audio tracks.",
-                   len(image_manifest), len(clip_manifest), len(audio_manifest))
-    return asset_manifest
+    return stage_compile(asset_manifest, episode)
 
 
 def stage_compile(asset_manifest: dict, episode: Episode) -> str:
@@ -326,7 +347,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
                 "-vf", f"crop=iw:ih-140:0:0,eq=brightness=-0.15:contrast=1.2:saturation=0.8,hue=s=0,eq=contrast=1.5,scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "20",
                 "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
                 str(hook_path)
             ], check=True, capture_output=True)
             
@@ -341,10 +362,10 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
                     "ffmpeg", "-y", 
                     "-i", str(hook_path), 
                     "-i", str(temp_path),
-                    "-filter_complex", "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[outv][outa]",
+                    "-filter_complex", "[0:v]fps=30,setsar=1[v0];[1:v]fps=30,setsar=1[v1];[v0][0:a][v1][1:a]concat=n=2:v=1:a=1[outv][outa]",
                     "-map", "[outv]", "-map", "[outa]",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                    "-c:a", "aac", "-b:a", "192k",
+                    "-c:a", "aac", "-b:a", "192k", "-video_track_timescale", "30000",
                     final_path
                 ], check=True, capture_output=True)
             
@@ -365,11 +386,14 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
     return output_paths
 
 
-def stage_publish(output_paths: dict, episode: Episode, script: dict) -> None:
+def stage_publish(output_paths: dict, episode: Episode, script: dict, platforms: list[str] = None) -> None:
     """
     步骤 6：多平台矩阵发布 (Douyin, TikTok, X, 快手)
     包含标题、文案、AIGC 声明勾选，以及原生投票（X）。
     """
+    if platforms is None:
+        platforms = ["douyin", "kuaishou"]
+        
     from automation.publisher import publish_to_douyin, build_douyin_caption, PublisherError
     from automation.tiktok_publisher import publish_to_tiktok, build_tiktok_caption
     from automation.x_publisher import publish_to_x, build_x_tweet
@@ -383,9 +407,9 @@ def stage_publish(output_paths: dict, episode: Episode, script: dict) -> None:
     kuaishou_path = output_paths.get("kuaishou", douyin_path)  # fallback to douyin
     global_path = output_paths.get("global")
 
-    logger.info("[Stage 6/6] Publishing to Matrix: \n- Douyin: {}\n- Kuaishou: {}\n- Global: {}", douyin_path, kuaishou_path, global_path)
+    logger.info(f"[Stage 6/6] Publishing to Matrix: {platforms}")
 
-    # 1. 发布到抖音
+    # 1. 提取基础信息
     display_number = episode.episode_number
     if episode.theme_key == "hospital_horror":
         display_number = episode.episode_number - 12
@@ -407,56 +431,62 @@ def stage_publish(output_paths: dict, episode: Episode, script: dict) -> None:
         episode_tag=episode.episode_tag,
         title=episode_title_cn,
     )
+    caption_ks = build_kuaishou_caption(
+        episode_summary=episode_summary_cn,
+        branch_a_teaser=kuaishou_branch_a,
+        branch_b_teaser=kuaishou_branch_b,
+        episode_tag=episode.episode_tag,
+        title=episode_title_cn,
+    )
 
     try:
-        publish_to_douyin(
-            video_path=douyin_path,
-            title=episode_title_cn,
-            caption=caption_cn,
-            check_aigc=True,
-            branch_a_teaser=douyin_branch_a,
-            branch_b_teaser=douyin_branch_b,
-            collection_name=collection_name_cn,
-        )
-        logger.success("Douyin publish successful.")
-        
-        # 2. 发布到 TikTok (海外视频)
-        episode_title_en = f"EP{display_number}: AI Interactive Horror"
-        branch_a_en = branches.get("english_branch_a_teaser", "Option A")
-        branch_b_en = branches.get("english_branch_b_teaser", "Option B")
-        caption_en_tiktok = build_tiktok_caption(episode_title_en, branch_a_en, branch_b_en, episode.episode_tag)
-        
-        publish_to_tiktok(
-            video_path=global_path,
-            title=episode_title_en,
-            caption=caption_en_tiktok,
-        )
-        logger.success("TikTok publish successful.")
-        
-        # 3. 发布到 X (带原生 Poll 投票)
-        tweet_text = build_x_tweet(episode_title_en, episode.episode_tag)
-        publish_to_x(
-            video_path=global_path,
-            tweet_text=tweet_text,
-            poll_options=["Option A", "Option B"]
-        )
-        logger.success("X (Twitter) publish successful.")
+        if "douyin" in platforms and douyin_path:
+            logger.info("Publishing to Douyin...")
+            episode.douyin_video_id, episode.douyin_video_url = publish_to_douyin(
+                video_path=douyin_path,
+                title=episode_title_cn,
+                caption=caption_cn,
+                check_aigc=True,
+                branch_a_teaser=douyin_branch_a,
+                branch_b_teaser=douyin_branch_b,
+                collection_name=collection_name_cn,
+            )
+            logger.success("Douyin publish successful.")
+            
+        if "tiktok" in platforms and global_path:
+            logger.info("Publishing to TikTok...")
+            episode_title_en = f"EP{display_number}: AI Interactive Horror"
+            branch_a_en = branches.get("english_branch_a_teaser", "Option A")
+            branch_b_en = branches.get("english_branch_b_teaser", "Option B")
+            caption_en_tiktok = build_tiktok_caption(episode_title_en, branch_a_en, branch_b_en, episode.episode_tag)
+            
+            publish_to_tiktok(
+                video_path=global_path,
+                title=episode_title_en,
+                caption=caption_en_tiktok,
+            )
+            logger.success("TikTok publish successful.")
+            
+        if "x" in platforms and global_path:
+            logger.info("Publishing to X (Twitter)...")
+            episode_title_en = f"EP{display_number}: AI Interactive Horror"
+            tweet_text = build_x_tweet(episode_title_en, episode.episode_tag)
+            publish_to_x(
+                video_path=global_path,
+                tweet_text=tweet_text,
+                poll_options=["Option A", "Option B"]
+            )
+            logger.success("X (Twitter) publish successful.")
 
-        # 4. 发布到快手（使用快手专版视频和文案）
-        caption_ks = build_kuaishou_caption(
-            episode_summary=episode_summary_cn,
-            branch_a_teaser=kuaishou_branch_a,
-            branch_b_teaser=kuaishou_branch_b,
-            episode_tag=episode.episode_tag,
-            title=episode_title_cn,
-        )
-        publish_to_kuaishou(
-            video_path=kuaishou_path,
-            title=episode_title_cn,
-            caption=caption_ks,
-        )
-        logger.success("快手发布成功！")
-        
+        if "kuaishou" in platforms and kuaishou_path:
+            logger.info("Publishing to Kuaishou...")
+            publish_to_kuaishou(
+                video_path=kuaishou_path,
+                title=episode_title_cn,
+                caption=caption_ks,
+            )
+            logger.success("Kuaishou publish successful.")
+            
     except Exception as e:
         logger.error(f"Matrix Publish Failed: {e}")
         raise  # 上抛给 run_pipeline 统一处理
@@ -498,8 +528,13 @@ def _get_or_create_current_episode(theme_key: str = "hospital_horror") -> Episod
                 Episode.status.in_([
                     EpisodeStatus.VOTING,
                     EpisodeStatus.GENERATING_SCRIPT,
+                    EpisodeStatus.GENERATING_IMAGES,
+                    EpisodeStatus.GENERATING_VIDEOS,
+                    EpisodeStatus.GENERATING_AUDIO_AND_COMPILE,
                     EpisodeStatus.PENDING_REVIEW,
-                    EpisodeStatus.GENERATING_ASSETS,
+                    EpisodeStatus.PENDING_IMAGE_REVIEW,
+                    EpisodeStatus.PENDING_VIDEO_REVIEW,
+                    EpisodeStatus.PENDING_PUBLISH,
                 ])
             )
             .order_by(Episode.episode_number.desc())
@@ -591,12 +626,51 @@ def run_pipeline(theme_key: str = "hospital_horror") -> None:
         elif episode.status == EpisodeStatus.PENDING_REVIEW:
             logger.warning("Episode {} is still PENDING_REVIEW. Waiting for human approval.", episode.episode_tag)
             
-        elif episode.status == EpisodeStatus.GENERATING_ASSETS:
+        elif episode.status.value == "GENERATING_ASSETS": # Legacy fallback
+            with get_session() as session:
+                ep = session.get(Episode, episode.id)
+                ep.status = EpisodeStatus.GENERATING_IMAGES
+                session.commit()
+            return run_pipeline(theme_key)
+
+        elif episode.status == EpisodeStatus.GENERATING_IMAGES:
             script = json.loads(episode.script_json or "{}")
-            assets = stage_generate_assets(script, episode)
-            output_path = stage_compile(assets, episode)
-            stage_publish(output_path, episode, script)
-            logger.success("Pipeline completed successfully.")
+            stage_generate_images(script, episode)
+            with get_session() as session:
+                ep = session.get(Episode, episode.id)
+                ep.status = EpisodeStatus.PENDING_IMAGE_REVIEW
+                session.commit()
+            logger.warning("Pipeline paused at PENDING_IMAGE_REVIEW. Please approve the images in Dashboard.")
+
+        elif episode.status == EpisodeStatus.PENDING_IMAGE_REVIEW:
+            logger.warning("Episode {} is still PENDING_IMAGE_REVIEW. Waiting for human approval.", episode.episode_tag)
+
+        elif episode.status == EpisodeStatus.GENERATING_VIDEOS:
+            script = json.loads(episode.script_json or "{}")
+            stage_generate_videos(script, episode)
+            with get_session() as session:
+                ep = session.get(Episode, episode.id)
+                ep.status = EpisodeStatus.PENDING_VIDEO_REVIEW
+                session.commit()
+            logger.warning("Pipeline paused at PENDING_VIDEO_REVIEW. Please approve the videos in Dashboard.")
+
+        elif episode.status == EpisodeStatus.PENDING_VIDEO_REVIEW:
+            logger.warning("Episode {} is still PENDING_VIDEO_REVIEW. Waiting for human approval.", episode.episode_tag)
+
+        elif episode.status == EpisodeStatus.GENERATING_AUDIO_AND_COMPILE:
+            script = json.loads(episode.script_json or "{}")
+            stage_generate_audio_and_compile(script, episode)
+            with get_session() as session:
+                ep = session.get(Episode, episode.id)
+                ep.status = EpisodeStatus.PENDING_PUBLISH
+                session.commit()
+            logger.warning("Pipeline paused at PENDING_PUBLISH. Please approve publishing in Dashboard.")
+
+        elif episode.status == EpisodeStatus.PENDING_PUBLISH:
+            logger.warning("Episode {} is still PENDING_PUBLISH. Waiting for human approval.", episode.episode_tag)
+            
+        elif episode.status == EpisodeStatus.COMPLETED:
+            logger.warning("Episode {} is COMPLETED. Ready for publish.", episode.episode_tag)
             
     except Exception as exc:
         logger.error("Pipeline FAILED at episode {}: {}", episode.episode_tag, exc)

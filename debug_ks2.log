@@ -1,7 +1,0 @@
-2026-05-26 10:14:24.440 | INFO     | __main__:debug_kuaishou:9 - Found contenteditable divs: 1
-2026-05-26 10:14:24.442 | INFO     | __main__:debug_kuaishou:12 -   [0] class=_description_17g9x_24, placeholder=作品描述不会写？试试智能文案, text=
-2026-05-26 10:14:24.442 | INFO     | __main__:debug_kuaishou:17 - Elements containing '标题':
-2026-05-26 10:14:24.454 | INFO     | __main__:debug_kuaishou:19 -   tag=script, class=None, text=
-2026-05-26 10:14:24.454 | INFO     | __main__:debug_kuaishou:19 -   tag=div, class=_title_16saw_55, text=去优化标题
-2026-05-26 10:14:24.455 | INFO     | __main__:debug_kuaishou:19 -   tag=div, class=_content_16saw_77, text=为了让更多人搜索到你的作品，建议使用智能推荐标题
-2026-05-26 10:14:24.455 | INFO     | __main__:debug_kuaishou:21 - Elements containing '简介':

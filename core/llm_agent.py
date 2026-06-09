@@ -328,7 +328,8 @@ def _call_claude(user_prompt: str, theme_key: str = "hospital_horror") -> str:
     except anthropic.RateLimitError as e:
         raise LLMCallError(f"Claude rate limit: {e}") from e
     except anthropic.APIStatusError as e:
-        raise LLMCallError(f"Claude API error {e.status_code}: {e.message}") from e
+        msg = str(e.message).replace('{', '{{').replace('}', '}}')
+        raise LLMCallError(f"Claude API error {e.status_code}: {msg}") from e
 
 
 @retry(
@@ -368,7 +369,8 @@ def _call_deepseek(user_prompt: str, theme_key: str = "hospital_horror") -> str:
     except openai.RateLimitError as e:
         raise LLMCallError(f"DeepSeek rate limit: {e}") from e
     except openai.APIStatusError as e:
-        raise LLMCallError(f"DeepSeek API error {e.status_code}: {e.message}") from e
+        msg = str(e.message).replace('{', '{{').replace('}', '}}')
+        raise LLMCallError(f"DeepSeek API error {e.status_code}: {msg}") from e
 
 
 # ──────────────────────────────────────────────────────────
@@ -547,27 +549,67 @@ def _invoke_critic(user_prompt: str, engine: str) -> str:
         return "PASS"
 
 
+@retry(
+    retry=retry_if_exception_type(LLMCallError),
+    stop=stop_after_attempt(API_MAX_RETRIES),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def _call_zhipu(user_prompt: str, theme_key: str = "hospital_horror") -> str:
+    """调用智谱 GLM-4-plus 作为最终兜底方案"""
+    zhipu_key = os.getenv("ZHIPU_API_KEY")
+    if not zhipu_key:
+        raise LLMCallError("ZHIPU_API_KEY is not configured.")
+    try:
+        client = openai.OpenAI(
+            api_key=zhipu_key,
+            base_url="https://open.bigmodel.cn/api/paas/v4/"
+        )
+        response = client.chat.completions.create(
+            model="glm-4-plus",
+            messages=[
+                {"role": "system", "content": _build_system_prompt(theme_key)},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=4096,
+            temperature=0.7,
+            response_format={"type": "json_object"},
+        )
+        raw = response.choices[0].message.content or ""
+        logger.debug("Zhipu raw response (first 200 chars): {}", raw[:200])
+        return raw
+    except Exception as e:
+        msg = str(e).replace('{', '{{').replace('}', '}}')
+        raise LLMCallError(f"Zhipu API error: {msg}") from e
+
 def _invoke_llm(user_prompt: str, engine: str, theme_key: str = "hospital_horror") -> str:
     """
     带有自动降级策略的统一调用入口。
-    优先 Claude，如果失败或未配置则回退到 DeepSeek。
+    优先 Claude -> DeepSeek -> Zhipu
     """
     if engine == "claude":
         return _call_claude(user_prompt, theme_key)
     elif engine == "deepseek":
         return _call_deepseek(user_prompt, theme_key)
+    elif engine == "zhipu":
+        return _call_zhipu(user_prompt, theme_key)
     else:
-        # auto 模式：优先 Claude，失败切 DeepSeek
+        # auto 模式：三重降级
         try:
             return _call_claude(user_prompt, theme_key)
         except LLMCallError as claude_err:
-            logger.warning("Claude failed ({}), falling back to DeepSeek...", claude_err)
+            logger.warning("Claude failed ({{}}), falling back to DeepSeek...", str(claude_err).replace('{', '{{').replace('}', '}}'))
             try:
                 return _call_deepseek(user_prompt, theme_key)
             except LLMCallError as deepseek_err:
-                raise LLMCallError(
-                    f"Both engines failed. Claude: {claude_err} | DeepSeek: {deepseek_err}"
-                ) from deepseek_err
+                logger.warning("DeepSeek failed ({{}}), falling back to Zhipu...", str(deepseek_err).replace('{', '{{').replace('}', '}}'))
+                try:
+                    return _call_zhipu(user_prompt, theme_key)
+                except LLMCallError as zhipu_err:
+                    raise LLMCallError(
+                        f"All engines failed. Claude: {claude_err} | DeepSeek: {deepseek_err} | Zhipu: {zhipu_err}"
+                    ) from zhipu_err
 
 
 # ──────────────────────────────────────────────────────────

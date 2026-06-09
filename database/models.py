@@ -38,9 +38,14 @@ class EpisodeStatus(str, enum.Enum):
     VOTING            = "VOTING"             # 上一集已发布，正在收集投票
     GENERATING_SCRIPT = "GENERATING_SCRIPT"  # LLM 生成剧本中
     PENDING_REVIEW    = "PENDING_REVIEW"     # 剧本生成完毕，等待人工审核确认
-    GENERATING_ASSETS = "GENERATING_ASSETS"  # 审核通过，生成图/音/视频资产
-    COMPLETED         = "COMPLETED"          # 本地合片完成，等待发布
-    PUBLISHED         = "PUBLISHED"          # 已成功发布至抖音
+    GENERATING_IMAGES = "GENERATING_IMAGES"  # 剧本审核通过，生图中
+    PENDING_IMAGE_REVIEW = "PENDING_IMAGE_REVIEW" # 生图完毕，等待人工确认
+    GENERATING_VIDEOS = "GENERATING_VIDEOS"  # 图片审核通过，图生视频中
+    PENDING_VIDEO_REVIEW = "PENDING_VIDEO_REVIEW" # 视频片段生成完毕，等待人工确认
+    GENERATING_AUDIO_AND_COMPILE = "GENERATING_AUDIO_AND_COMPILE" # 配音、音效、视频最终硬烧录合并
+    PENDING_PUBLISH   = "PENDING_PUBLISH"    # 最终视频合成完毕，等待勾选平台发布
+    COMPLETED         = "COMPLETED"          # 视频合成完毕(旧状态保留兼容)
+    PUBLISHED         = "PUBLISHED"          # 已成功发布至选中平台
     FAILED            = "FAILED"             # 流水线某步骤失败，需人工介入
 
 
@@ -134,7 +139,7 @@ class Episode(Base):
 
     # ── 状态机 ─────────────────────────────────────────────
     status: Mapped[EpisodeStatus] = mapped_column(
-        Enum(EpisodeStatus, native_enum=False, length=20),
+        Enum(EpisodeStatus, native_enum=False, length=50),
         default=EpisodeStatus.VOTING,
         nullable=False,
         index=True,
