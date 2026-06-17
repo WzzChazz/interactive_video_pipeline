@@ -21,6 +21,7 @@ import json
 import tempfile
 from pathlib import Path
 from typing import Optional, Literal
+from functools import lru_cache
 
 from loguru import logger
 
@@ -38,6 +39,24 @@ class FFmpegError(Exception):
     pass
 
 
+def _is_healing_theme(theme_key: str) -> bool:
+    """治愈/非连载题材 → 关闭恐怖专属特效（低频轰鸣/倒叙去色/手持抖动/灯管闪烁/对口型/恐怖中插）。"""
+    from config.themes import THEMES
+    t = THEMES.get(theme_key, {})
+    return (not t.get("is_serial", True)) or t.get("narration_mode") == "voiceover_offscreen"
+
+
+def _pick_healing_bgm() -> Optional[str]:
+    """从 sfx_library/bgm_healing/ 随机挑一首治愈 BGM；无文件则返回 None。"""
+    import random
+    bgm_dir = Path(__file__).resolve().parent.parent / "sfx_library" / "bgm_healing"
+    if not bgm_dir.exists():
+        return None
+    files = [p for p in bgm_dir.iterdir()
+             if p.suffix.lower() in (".mp3", ".wav", ".m4a", ".aac", ".flac")]
+    return str(random.choice(files)) if files else None
+
+
 # ──────────────────────────────────────────────────────────
 # FFmpeg 执行辅助
 # ──────────────────────────────────────────────────────────
@@ -45,7 +64,8 @@ class FFmpegError(Exception):
 
 def _publish_progress(episode_tag: str, step_name: str, pct: int):
     try:
-        r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+        from config.settings import get_redis
+        r = get_redis()
         r.publish("pipeline_progress", json.dumps({
             "active": True, "step_name": step_name, "step": 5, "total": 6, "pct": pct, "episode": episode_tag
         }))
@@ -88,15 +108,33 @@ def _get_audio_duration(path: str) -> float:
         logger.warning(f"Failed to get audio duration for {path}: {e}")
         return 0.0
 
+@lru_cache(maxsize=1)
+def _get_best_encoder() -> tuple[str, list[str]]:
+    try:
+        import subprocess
+        result = subprocess.run(["ffmpeg", "-hide_banner", "-encoders"],
+                                capture_output=True, text=True, timeout=10)
+        stdout = result.stdout
+        if "h264_videotoolbox" in stdout:
+            return "h264_videotoolbox", ["-q:v", "60", "-allow_sw", "1"]
+        if "h264_nvenc" in stdout:
+            return "h264_nvenc", ["-preset", "p4", "-cq", "18"]
+    except Exception as e:
+        logger.warning(f"Failed to detect FFmpeg encoders: {e}")
+    return "libx264", ["-preset", "fast", "-crf", "18"]
+
 
 # ──────────────────────────────────────────────────────────
 # 封面生成 (Cover Generation)
 # ──────────────────────────────────────────────────────────
 
-def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Path) -> Path:
+def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Path, theme_key: str = "hospital_horror") -> Path:
     """
-    使用 FFmpeg 在首帧图片上叠加高饱和度黄色大字标题，生成爆款封面。
+    使用 FFmpeg 在首帧图片上叠加大字标题，生成爆款封面。
+    恐怖题材 → 冷蓝压暗 + 血红阴影；治愈题材 → 暖亮软萌 + 柔粉描边。
     """
+    healing = _is_healing_theme(theme_key)
+
     def escape_text(t):
         return str(t).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
     
@@ -109,23 +147,40 @@ def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Pa
     
     # 动态副标题，如果为空则默认
     if not sub_title:
-        sub_title = "点击揭开真相！"
+        sub_title = "今天也要开心鸭～" if healing else "点击揭开真相！"
     sub_title = escape_text(f"▶ {sub_title}")
-    
-    cover_filter = (
-        # 1. 强制压暗 + 去饱和 + 冷蓝色调（不管原图白天还是夜晚，都变成深夜恐怖氛围）
-        f"eq=brightness=-0.35:contrast=1.4:saturation=0.3,"
-        # 2. 叠加一层冷蓝色 tint：给 R 通道减弱，给 B 通道加强
-        f"curves=red='0/0 1/0.7':blue='0/0.1 1/1.0',"
-        # 3. 强力四角暗角，营造窥视感
-        f"vignette=PI/2.5,"
-        # 4. 主标题（白字 + 血红阴影）
-        f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{main_title}':"
-        f"x=(w-text_w)/2:y=h/2-250:fontsize=130:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
-        # 5. 副标题引导文案（明黄色）
-        f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{sub_title}':"
-        f"x=(w-text_w)/2:y=h/2-80:fontsize=70:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
-    )
+
+    from config.settings import get_chinese_font
+    font_path = get_chinese_font() or "/System/Library/Fonts/Supplemental/Songti.ttc"
+
+    if healing:
+        cover_filter = (
+            # 1. 微提亮 + 暖调 + 略增饱和（温暖治愈，绝不压暗）
+            f"eq=brightness=0.04:contrast=1.05:saturation=1.18,"
+            # 2. 暖色 tint：R 通道略提、B 通道略压
+            f"curves=red='0/0.03 1/1.0':blue='0/0 1/0.92',"
+            # 3. 主标题（白字 + 柔粉描边，圆润可爱）
+            f"drawtext=fontfile='{font_path}':text='{main_title}':"
+            f"x=(w-text_w)/2:y=h/2-250:fontsize=120:fontcolor=white:bordercolor=0xB18FFF:borderw=6,"
+            # 4. 副标题引导文案（暖白字 + 浅棕柔影）
+            f"drawtext=fontfile='{font_path}':text='{sub_title}':"
+            f"x=(w-text_w)/2:y=h/2-90:fontsize=66:fontcolor=0xFFF6E5:shadowcolor=0x7A5230:shadowx=3:shadowy=3"
+        )
+    else:
+        cover_filter = (
+            # 1. 强制压暗 + 去饱和 + 冷蓝色调（不管原图白天还是夜晚，都变成深夜恐怖氛围）
+            f"eq=brightness=-0.35:contrast=1.4:saturation=0.3,"
+            # 2. 叠加一层冷蓝色 tint：给 R 通道减弱，给 B 通道加强
+            f"curves=red='0/0 1/0.7':blue='0/0.1 1/1.0',"
+            # 3. 强力四角暗角，营造窥视感
+            f"vignette=PI/2.5,"
+            # 4. 主标题（白字 + 血红阴影）
+            f"drawtext=fontfile='{font_path}':text='{main_title}':"
+            f"x=(w-text_w)/2:y=h/2-250:fontsize=130:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
+            # 5. 副标题引导文案（明黄色）
+            f"drawtext=fontfile='{font_path}':text='{sub_title}':"
+            f"x=(w-text_w)/2:y=h/2-80:fontsize=70:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
+        )
     
     _run_ffmpeg([
         "-i", str(image_path),
@@ -245,13 +300,13 @@ def _concat_video_clips(
             f.write(f"file '{p}'\n")
             f.write(f"outpoint {dur:.3f}\n")
 
+    vcodec, vargs = _get_best_encoder()
     _run_ffmpeg([
         "-f", "concat",
         "-safe", "0",
         "-i", str(concat_list),
-        "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "18",
+        "-c:v", vcodec,
+        *vargs,
         "-vf", f"fps=30,setsar=1,crop=iw*0.9:ih*0.9:(iw-ow)/2:(ih-oh)/2,"
                f"eq=brightness=-0.05:contrast=1.15:saturation=0.8,"
                f"curves=red='0/0 1/0.95':blue='0/0.02 1/1.0',"
@@ -301,20 +356,65 @@ def _build_audio_track(
     sfx_inputs.append("[s_base]")
     input_idx += 1
     
-    # 注入诺兰式 45Hz 心理压抑低频轰鸣 (Sub-Bass Infrasound Drone)
-    drone_path = tmp_dir / "drone.wav"
-    _run_ffmpeg([
-        "-f", "lavfi",
-        "-i", "sine=frequency=45:beep_factor=0",
-        "-t", str(total_duration),
-        str(drone_path)
-    ], step_name="gen_drone")
-    
-    input_args += ["-i", str(drone_path)]
-    # 给低频轰鸣加一个恒定的压迫音量
-    filter_parts.append(f"[{input_idx}]volume=0.8[drone_base]")
-    sfx_inputs.append("[drone_base]")
-    input_idx += 1
+    # 注入诺兰式 45Hz 心理压抑低频轰鸣 (Sub-Bass Infrasound Drone) —— 仅恐怖/悬疑题材
+    if not _is_healing_theme(theme_key):
+        drone_path = tmp_dir / "drone.wav"
+        _run_ffmpeg([
+            "-f", "lavfi",
+            "-i", "sine=frequency=45:beep_factor=0",
+            "-t", str(total_duration),
+            str(drone_path)
+        ], step_name="gen_drone")
+
+        input_args += ["-i", str(drone_path)]
+        filter_parts.append(f"[{input_idx}]volume=0.8[drone_base]")
+        sfx_inputs.append("[drone_base]")
+        input_idx += 1
+
+    # ── 治愈 BGM 音乐底层（capybara_healing 等治愈题材专用）────────────────
+    if _is_healing_theme(theme_key):
+        _bgm = _pick_healing_bgm()
+        if _bgm:
+            fade_out_st = max(0.0, total_duration - 1.5)
+            input_args += ["-i", _bgm]
+            filter_parts.append(
+                f"[{input_idx}]aresample=48000,"
+                f"aloop=loop=-1:size=2000000000,"      # 无限循环铺满全片
+                f"atrim=duration={total_duration},"    # 截到正好一条时长
+                f"afade=t=in:st=0:d=1,"                # 开头淡入
+                f"afade=t=out:st={fade_out_st}:d=1.5," # 结尾淡出
+                f"volume=0.22[bgm_heal]"               # 压低，不抢拟人对话
+            )
+            sfx_inputs.append("[bgm_heal]")
+            input_idx += 1
+            logger.info(f"[AudioTrack] 治愈 BGM 已接入: {Path(_bgm).name}")
+        else:
+            logger.warning("[AudioTrack] 治愈题材但 sfx_library/bgm_healing/ 无音乐文件，无 BGM")
+
+    # ── ElevenLabs 整集环境音底层（免费账号最佳用法）──────────────────────
+    # 调用缓存优先的生成器，第一次消耗 1-2 次 API 额度，之后命中缓存免费复用
+    try:
+        from core.audio_gen import generate_episode_ambient_sfx
+        # 治愈题材跳过恐怖环境音，只用上面的 BGM 音乐
+        ambient_path = None if _is_healing_theme(theme_key) else generate_episode_ambient_sfx(theme_key=theme_key, duration_seconds=40)
+        if ambient_path and ambient_path.exists() and ambient_path.stat().st_size > 10_000:
+            input_args += ["-i", str(ambient_path)]
+            # 无限循环铺满整集，音量 -12dB（不抢人声主角地位）
+            filter_parts.append(
+                f"[{input_idx}]aresample=48000,"
+                f"aloop=loop=-1:size=2000000000,"   # 无限循环
+                f"atrim=duration={total_duration},"  # 截断到正好一集时长
+                f"volume=0.25[ambient_el]"           # -12dB 底层音量
+            )
+            sfx_inputs.append("[ambient_el]")
+            input_idx += 1
+            logger.info(f"[AudioTrack] ElevenLabs 整集环境音已接入: {ambient_path.name}")
+        else:
+            logger.info("[AudioTrack] 无 ElevenLabs 环境音可用，仅使用 45Hz drone")
+    except Exception as e:
+        logger.warning(f"[AudioTrack] 加载整集环境音失败（不影响主流程）: {e}")
+    # ────────────────────────────────────────────────────────────────────────
+
 
     from config.themes import THEMES
     reverb_filter = THEMES.get(theme_key, {}).get("audio_reverb_filter", "")
@@ -413,14 +513,19 @@ def _mux_final_video(
     next_branches: dict = None,
     banner_text: str = "",
     platform: str = "douyin",
-    last_image_path: Optional[str] = None
+    last_image_path: Optional[str] = None,
+    theme_key: str = "hospital_horror",
 ) -> Path:
     """将拼接好的视频与混音轨、字幕进行最终封装，并叠加双轨专属特效。"""
+
+    healing = _is_healing_theme(theme_key)
+    from config.settings import get_chinese_font
+    font_path = get_chinese_font() or "/System/Library/Fonts/Supplemental/Songti.ttc"
     
     # 防风控滤镜：去重与随机时间戳
     import time
     import random
-    anti_duplicate_filter = f"drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='{int(time.time())}':x=w-50:y=h-50:fontsize=1:fontcolor=black@0.01,"
+    anti_duplicate_filter = f"drawtext=fontfile='{font_path}':text='{int(time.time())}':x=w-50:y=h-50:fontsize=1:fontcolor=black@0.01,"
     
     # 伪纪录片手持摄像机震动算法 (Handheld Camera Shake)
     # 裁切掉 3% 的边缘（等同于缩放放大防搬运），并用高频三角函数做不规则剧烈抖动
@@ -431,6 +536,11 @@ def _mux_final_video(
     # 物理电压光影不稳闪烁算法 (Dynamic Lighting Flicker)
     # 模拟坏掉的灯管，亮度随时间做极细微的三角函数跳动
     lighting_flicker_filter = "eq=brightness='0.02*sin(t*15*random(1))':gamma='1.0+0.05*cos(t*11*random(1))',"
+
+    # 治愈题材：关闭手持抖动与灯管闪烁（温柔稳定画面），仅保留 3% 防搬运裁切
+    if healing:
+        camera_shake_filter = "crop=iw*0.97:ih*0.97,"
+        lighting_flicker_filter = ""
     
     # 倒计时特效 (最后 5 秒)
     countdown_start = max(0, total_duration - 5)
@@ -451,12 +561,12 @@ def _mux_final_video(
             branch_a = next_branches.get("english_branch_a_teaser") or ""
             branch_b = next_branches.get("english_branch_b_teaser") or ""
 
-        # Mid-roll engagement prompt for Kuaishou (keep this!)
-        if platform == "kuaishou":
+        # Mid-roll engagement prompt for Kuaishou (恐怖题材专用；治愈题材跳过这句吓人中插)
+        if platform == "kuaishou" and not healing:
             mid_time = max(2, total_duration / 2)
             mid_end = mid_time + 4
             ab_text_filter += (
-                f",drawtext=fontfile='/System/Library/Fonts/Supplemental/Songti.ttc':text='如果你是她，你敢进去吗？':"
+                f",drawtext=fontfile='{font_path}':text='如果你是她，你敢进去吗？':"
                 f"enable='between(t,{mid_time},{mid_end})':"
                 f"x=(w-text_w)/2:y=h/2-150:fontsize=64:fontcolor=yellow:shadowcolor=black:shadowx=3:shadowy=3:alpha='if(lt(t,{mid_time}+0.5),(t-{mid_time})/0.5,if(gt(t,{mid_end}-0.5),({mid_end}-t)/0.5,1))'"
             )
@@ -476,11 +586,15 @@ def _mux_final_video(
     if audio_path and audio_path.exists():
         input_args += ["-i", str(audio_path)]
 
+    vcodec, vargs = _get_best_encoder()
+    # Need to override CRF for muxing if we are using libx264
+    if vcodec == "libx264":
+        vargs = ["-preset", "medium", "-crf", "20"]
+        
     output_args = [
         "-vf", font_spec,
-        "-c:v", "libx264",
-        "-preset", "medium",
-        "-crf", "20",
+        "-c:v", vcodec,
+        *vargs,
         "-profile:v", "high",
         "-level", "4.1",
         "-movflags", "+faststart",  # 首帧快速加载（抖音要求）
@@ -609,10 +723,10 @@ def compile_video(
         cover_frame_path = clip_manifest.get(cover_scene_idx, "")
         logger.info("Cover will use scene {} (is_climax={})", cover_scene_idx, climax_scene.get("is_climax", False))
         if cover_frame_path and Path(cover_frame_path).exists():
-            generate_cover(cover_frame_path, banner_text, cover_teaser, cover_path)
+            generate_cover(cover_frame_path, banner_text, cover_teaser, cover_path, theme_key=theme_key)
         
         cold_open_dur = 1.5
-        if len(sorted_scenes) >= 3:
+        if len(sorted_scenes) >= 3 and not _is_healing_theme(theme_key):
             high_tension_idx = sorted_scenes[-2]["scene_index"]
             raw_path = clip_manifest.get(high_tension_idx)
             if raw_path and Path(raw_path).exists():
@@ -674,7 +788,7 @@ def compile_video(
             if s_idx != -1:
                 from config.settings import USE_LIPSYNC
                 
-                if USE_LIPSYNC and v_path and Path(v_path).exists() and Path(v_path).stat().st_size > 0 and scene.get("dialogue"):
+                if USE_LIPSYNC and not _is_healing_theme(theme_key) and v_path and Path(v_path).exists() and Path(v_path).stat().st_size > 0 and scene.get("dialogue"):
                     logger.info("Applying LipSync + CodeFormer to Scene {}...", s_idx)
                     _publish_progress(episode_tag, f"唇形增强 (片段 {s_idx}/6)", 45 + s_idx * 4)
                     try:
@@ -750,12 +864,12 @@ def compile_video(
         
         if render_mode in ("all", "douyin_only"):
             final_douyin = out_dir / f"{episode_tag}_douyin.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin", last_image_path=last_image_path)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin", last_image_path=last_image_path, theme_key=theme_key)
             result_paths["douyin"] = str(final_douyin)
             
         if render_mode in ("all", "kuaishou_only"):
             final_ks = out_dir / f"{episode_tag}_kuaishou.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou", last_image_path=last_image_path)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou", last_image_path=last_image_path, theme_key=theme_key)
             result_paths["kuaishou"] = str(final_ks)
             
         if render_mode in ("all", "global_only"):
@@ -765,7 +879,7 @@ def compile_video(
                 f.write(srt_en_content)
 
             final_global = out_dir / f"{episode_tag}_global.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global", last_image_path=last_image_path)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global", last_image_path=last_image_path, theme_key=theme_key)
             result_paths["global"] = str(final_global)
 
     logger.success("FFmpeg Compilation COMPLETED: {}", result_paths)

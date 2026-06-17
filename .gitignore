@@ -32,3 +32,14 @@ storage/pipeline.db*
 database/app.db
 storage/
 .env
+
+# 私密测试产物 & 抓取的账号数据 —— 绝不上传
+scratch/
+LatentSync/
+*.db
+chatgpt.jpg
+
+# 含硬编码密钥的旧调试脚本 —— 绝不上传
+scripts/archive/test_sf_kolors.py
+scripts/archive/test_sf_models.py
+scripts/archive/test_sf_new.py

@@ -117,123 +117,106 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
             # 如果音效失败，继续往下走 TTS 兜底
             pass
 
+    # 引入清洗工具，去掉括号里的动作描写如“(哭泣)”，否则 Edge-TTS 会直接读出“括号”
+    from core.tts_engine import LLMTextSanitizer
+    text = LLMTextSanitizer.sanitize(text, emotion, speaker)
+
+    if not text:
+        logger.warning(f"Text empty after sanitization for speaker {speaker}. Generating silence.")
+        # 直接生成空白音频文件并返回
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        pad_cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+            "-t", "3.0", "-c:a", "libmp3lame", str(save_path)
+        ]
+        subprocess.run(pad_cmd, check=True, capture_output=True)
+        # 伪造空 VTT
+        vtt_path = save_path.with_suffix(".vtt")
+        vtt_path.write_text("WEBVTT\n\n", encoding="utf-8")
+        return save_path
+
     # SSML 悬疑断句解析：将 [pause:Xs] 替换为标点，或者直接用 SSML（这里用逗号/句号最简单有效）
     # edge-tts 在遇到多个句号时会自动拉长停顿
     processed_text = re.sub(r'\[pause:(\d+\.?\d*)s?\]', lambda m: "。" * max(1, int(float(m.group(1)) * 2)), text)
     processed_text = processed_text.replace("...", "。。。")
     
-    # === 新增：DashScope 自定义音色拦截逻辑 ===
+    # === 决定是否走云端高保真引擎 (DashScope) ===
     from config.settings import DASHSCOPE_API_KEY
     import os
     CUSTOM_TERRIFIED = os.getenv("DASHSCOPE_VOICE_TERRIFIED", "")
     CUSTOM_ROBOTIC = os.getenv("DASHSCOPE_VOICE_ROBOTIC", "")
     
     is_clone = speaker and "克隆" in speaker
-    use_dashscope = False
-    
-    if is_clone and CUSTOM_ROBOTIC:
-        use_dashscope = True
-    elif emotion in ("fearful", "terrified", "panicked", "nervous", "shocked") and CUSTOM_TERRIFIED:
-        use_dashscope = True
+    # 如果配置了阿里云 API Key，全量使用高质量的 DashScope，彻底抛弃本地廉价合成的怪异语调
+    use_dashscope = bool(DASHSCOPE_API_KEY)
         
-    if use_dashscope and DASHSCOPE_API_KEY:
-        try:
-            from core.tts_engine import DynamicTTSEngine
-            engine = DynamicTTSEngine()
-            # DynamicTTSEngine 的 generate 内部会调用 sanitize 并且处理生成
-            engine.generate(role=speaker, emotion=emotion, raw_text=text, output_path=save_path)
-            
-            # 由于 DashScope 不直接生成 VTT，我们通过探测时长伪造一个包含整句的字幕文件
-            dur_cmd = ["ffprobe", "-i", str(save_path), "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0"]
-            dur_str = subprocess.check_output(dur_cmd).decode().strip()
-            dur_sec = float(dur_str)
-            
-            def format_ts(seconds: float) -> str:
-                h = int(seconds // 3600)
-                m = int((seconds % 3600) // 60)
-                s = int(seconds % 60)
-                ms = int((seconds - int(seconds)) * 1000)
-                return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
-                
-            vtt_content = f"WEBVTT\n\n00:00:00.000 --> {format_ts(dur_sec)}\n{text}\n"
-            vtt_path = save_path.with_suffix(".vtt")
-            vtt_path.write_text(vtt_content, encoding="utf-8")
-            
-            logger.debug(f"Voice (DashScope) and VTT saved: {save_path}")
-            return save_path
-        except Exception as e:
-            logger.error(f"DashScope TTS failed: {e}. Falling back to Edge-TTS.")
-            # 如果 DashScope 失败，优雅降级到 edge-tts 继续往下执行
-            pass
-            
-    voice_id = _get_voice_for_speaker(speaker)
-    vtt_path = save_path.with_suffix(".vtt")
-    
-    # ── 情绪 → rate/pitch 映射（直接用参数，彻底抛弃 SSML） ──────────────
-    # edge-tts 无论是 --file CLI 还是 Python API Communicate()，
-    # 都不会解析 <speak> SSML 标签，会把 XML 当纯文字朗读 → 产生英文噪音
-    # 正确方案：用 Communicate(text, voice, rate=, pitch=) 的参数控制情绪节奏
-    EMOTION_RATE_MAP = {
-        "fearful":    ("+20%", "+5Hz"),
-        "terrified":  ("+30%", "+10Hz"),
-        "panicked":   ("+35%", "+8Hz"),
-        "angry":      ("+10%", "+3Hz"),
-        "determined": ("+5%",  "-2Hz"),
-        "cold":       ("-15%", "-8Hz"),
-        "sad":        ("-10%", "-5Hz"),
-        "neutral":    ("-10%", "+0Hz"),
-        "shocked":    ("+15%", "+5Hz"),
-    }
-    emo_rate, emo_pitch = EMOTION_RATE_MAP.get(emotion, ("-10%", "+0Hz"))
-    
-    # ── 用 edge-tts Python API 直接传纯文本 + 参数 ──────────────────────
-    try:
-        import asyncio
-        import edge_tts
-        
-        async def _synthesize():
-            communicate = edge_tts.Communicate(
-                processed_text,
-                voice_id,
-                rate=emo_rate,
-                pitch=emo_pitch,
-            )
-            await communicate.save(str(save_path))
-            # 收集 WordBoundary 事件生成字幕
-            sub_maker = edge_tts.SubMaker()
-            async for chunk in edge_tts.Communicate(processed_text, voice_id, rate=emo_rate, pitch=emo_pitch).stream():
-                if chunk["type"] == "WordBoundary":
-                    sub_maker.feed(chunk)
-            srt_content = sub_maker.get_srt()
-            if srt_content.strip():
-                vtt_path.write_text(srt_content, encoding="utf-8")
-            else:
-                # 兜底：写一个单条 SRT 字幕，时长与音频一致
-                # 注意时间格式必须用逗号（SRT标准），_parse_time_to_seconds 才能正确解析
-                vtt_path.write_text(f"1\n00:00:00,000 --> 00:00:09,900\n{text}\n\n", encoding="utf-8")
-        
-        asyncio.run(_synthesize())
-        
-    except Exception as e:
-        # 降级：CLI --text 传纯文本（绝不用 --file 传 SSML）
-        logger.warning(f"edge_tts Python API failed ({e}), falling back to CLI with --text")
-        # 关键修复：负数参数（如 -10%）必须用 = 连接，否则 argparse 把它当另一个 flag
-        cmd = [
-            "python3", "-m", "edge_tts",
-            "--text", processed_text,
-            "--voice", voice_id,
-            f"--rate={emo_rate}",    # 必须用 = ，避免 -10% 被 argparse 误识别为 flag
-            f"--pitch={emo_pitch}",  # 同上
-            "--write-media", str(save_path),
-            "--write-subtitles", str(vtt_path)
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as ex:
-            raise AudioGenError(f"Edge-TTS CLI failed: {ex.stderr}")
-        
+    from core.tts_engine import DynamicTTSEngine
+    engine = DynamicTTSEngine(theme_key)
 
-    logger.debug("Voice (Edge-TTS) and VTT saved: {}", save_path)
+    try:
+        if use_dashscope and DASHSCOPE_API_KEY:
+            # 云端引擎，内部会自动进行 sanitize，失败会降级 Kokoro
+            engine.generate(role=speaker, emotion=emotion, raw_text=text, output_path=save_path)
+        else:
+            # 本地免费、高拟真兜底引擎 (Kokoro 82M)
+            # text 在上方已经 sanitize 过，直接传进去
+            engine._generate_kokoro(role=speaker, emotion=emotion, clean_text=processed_text, output_path=save_path)
+    except Exception as e:
+        logger.error(f"TTS generation completely failed: {e}")
+        # 如果彻底失败，生成静音兜底
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        pad_cmd = [
+            "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+            "-t", "3.0", "-c:a", "libmp3lame", str(save_path)
+        ]
+        subprocess.run(pad_cmd, check=True, capture_output=True)
+
+    # === Pedalboard 音频后期处理 (Audio FX) ===
+    try:
+        from core.audio_post_processor import apply_audio_preset
+        tmp_path = save_path.with_suffix('.post.mp3')
+        apply_audio_preset(save_path, tmp_path, emotion, speaker)
+        if tmp_path.exists():
+            import shutil
+            shutil.move(tmp_path, save_path)
+    except Exception as e:
+        logger.warning(f"[Audio FX] Post-processing failed, using raw audio: {e}")
+
+    # 探测时长
+    dur_cmd = ["ffprobe", "-i", str(save_path), "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0"]
+    dur_str = subprocess.check_output(dur_cmd).decode().strip()
+    dur_sec = float(dur_str)
+    
+    # ── P1-2: 使用 WhisperX 强制对齐逐词字幕 ──
+    try:
+        from core.whisper_aligner import generate_word_level_vtt
+        generate_word_level_vtt(save_path, save_path.with_suffix(".vtt"))
+    except Exception as e:
+        logger.error(f"[Whisper] 字幕对齐失败，降级使用整句字幕: {e}")
+        def format_ts(seconds: float) -> str:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            ms = int((seconds - int(seconds)) * 1000)
+            return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+        vtt_content = f"WEBVTT\n\n00:00:00.000 --> {format_ts(dur_sec)}\n{text}\n"
+        save_path.with_suffix(".vtt").write_text(vtt_content, encoding="utf-8")
+        
+    # ── P0-2: 短台词静音填充 (Silence Padding) ──
+    if dur_sec < 3.0:
+        logger.info(f"Audio is short ({dur_sec:.2f}s). Padding to 3.0s to ensure scene length.")
+        padded_path = save_path.with_name(f"padded_{save_path.name}")
+        pad_cmd = [
+            "ffmpeg", "-y", "-i", str(save_path),
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
+            "-filter_complex", "[0:a]apad=pad_dur=3.0[outa]",
+            "-map", "[outa]", str(padded_path)
+        ]
+        subprocess.run(pad_cmd, check=True, capture_output=True)
+        import shutil
+        shutil.move(str(padded_path), str(save_path))
+
+    logger.debug("Voice and VTT saved: {}", save_path)
     return save_path
 
 
@@ -242,20 +225,30 @@ def generate_voice(text: str, save_path: Path, emotion: str = "neutral",
        wait=wait_exponential(min=3, max=30), reraise=True)
 def generate_sfx(prompt: str, save_path: Path,
                  duration_seconds: int = CLIP_DURATION_SECONDS) -> Path:
+    """生成单个分镜的点音效（Foley）。免费账号时作为兜底使用 FFmpeg 合成音效。"""
     from config.settings import USE_ELEVENLABS_SFX
     def _generate_fallback_sfx():
+        # ── P1-1: 解决 SFX 兜底音频复用 ──
+        # 利用提示词的 hash 改变合成参数，让不同音效有差异
+        h = hash(prompt)
+        base_freq = 40 + (h % 80)        # 40Hz 到 120Hz
+        mod_freq = 0.1 + ((h % 10) / 10) # 0.1Hz 到 1.0Hz 的颤音
+        noise_vol = 0.05 + ((h % 15) / 100) # 白噪声比例
+
         import subprocess
         save_path.parent.mkdir(parents=True, exist_ok=True)
+        # 用不同的正弦波组合与噪声制作独特的低频氛围
+        aeval_expr = f"random(0)*{noise_vol}*sin(2*PI*t*{mod_freq}) + sin(2*PI*t*{base_freq})*0.4"
         cmd = [
             "ffmpeg", "-y", "-f", "lavfi",
-            "-i", "aevalsrc='random(0)*0.15*sin(2*PI*t*0.5) + sin(2*PI*t*80)*0.4'",
+            "-i", f"aevalsrc='{aeval_expr}'",
             "-t", str(duration_seconds),
             "-c:a", "libmp3lame",
             str(save_path)
         ]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            logger.debug(f"Synthetic FFmpeg SFX saved: {save_path}")
+            logger.debug(f"Synthetic FFmpeg SFX saved: {save_path} (Freq: {base_freq}Hz)")
             return save_path
         except subprocess.CalledProcessError as e:
             raise AudioGenError(f"Local FFmpeg SFX generation failed: {e.stderr.decode()}")
@@ -271,8 +264,11 @@ def generate_sfx(prompt: str, save_path: Path,
     try:
         resp = requests.post(
             f"{_EL_BASE}/sound-generation",
-            json={"text": prompt, "duration_seconds": float(duration_seconds),
-                  "prompt_influence": 0.3},
+            json={
+                "text": prompt,
+                "duration_seconds": float(duration_seconds),
+                "prompt_influence": 0.7,  # 提升至 0.7，让生成效果更贴近提示词
+            },
             headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
             timeout=60,
         )
@@ -287,6 +283,163 @@ def generate_sfx(prompt: str, save_path: Path,
     save_path.write_bytes(resp.content)
     logger.debug("SFX saved ({} bytes): {}", len(resp.content), save_path)
     return save_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 整集环境音生成（ElevenLabs 免费账号的最佳用法）
+# 来源：voice-pro 分析 — ElevenLabs 免费账号最适合做整集统一的环境音底层
+#
+# 策略：
+# 1. 一次性生成 40 秒高质量恐怖医院环境音底层
+# 2. 缓存到 sfx_library/，整个项目只消耗 1 次 API 配额（而不是每个分镜消耗 1 次）
+# 3. ffmpeg_compiler.py 的 _build_audio_track 会把它作为全局底层铺满整集
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 按主题预设的高质量环境音提示词（精心设计，针对 ElevenLabs 音效引擎优化）
+AMBIENT_PROMPTS = {
+    "hospital_horror": (
+        "Hospital archive room at 3am, deep sub-bass drone hum, "
+        "distant hospital machinery beeping erratically, "
+        "fluorescent light buzzing and flickering, "
+        "occasional distant muffled footsteps on linoleum, "
+        "the sound of old metal filing cabinet drawers being opened, "
+        "eerie silence punctuated by creaking metal shelves, "
+        "subtle distant crying that stops abruptly, "
+        "low frequency infrasound pressure"
+    ),
+    "school_horror": (
+        "Abandoned school hallway at night, wind through broken windows, "
+        "lockers rattling, distant children's laughter echoing, "
+        "fluorescent light buzzing, creaking floorboards"
+    ),
+    "default": (
+        "Dark atmospheric horror ambience, low drone, "
+        "distant unnerving sounds, tension building"
+    ),
+}
+
+_SFX_LIBRARY_DIR = Path("./sfx_library")
+
+
+def generate_episode_ambient_sfx(
+    theme_key: str = "hospital_horror",
+    duration_seconds: int = 40,
+    force_regenerate: bool = False,
+) -> Optional[Path]:
+    """
+    生成整集统一的环境音底层音轨（ElevenLabs 免费账号的最优使用方式）。
+
+    - 第一次调用：请求 ElevenLabs API，生成 {duration_seconds} 秒高质量环境音
+    - 后续调用：直接返回缓存路径，不再消耗 API 配额
+    - 在 ffmpeg_compiler._build_audio_track 中作为全局底层铺满整集视频
+
+    Returns:
+        Path to ambient audio file，失败时返回 None（管线可以继续，只是没有环境音）
+    """
+    from config.settings import USE_ELEVENLABS_SFX
+
+    _SFX_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = _SFX_LIBRARY_DIR / f"ambient_{theme_key}_{duration_seconds}s.mp3"
+
+    # 命中缓存：直接返回，节省 API 配额
+    if cache_path.exists() and cache_path.stat().st_size > 10_000 and not force_regenerate:
+        logger.info(f"[Ambient SFX] 命中缓存，跳过 API 调用: {cache_path}")
+        return cache_path
+
+    prompt = AMBIENT_PROMPTS.get(theme_key, AMBIENT_PROMPTS["default"])
+
+    # ElevenLabs API 最大支持 22 秒，超过 22 秒需要分段拼接
+    MAX_EL_DURATION = 22
+
+    def _call_elevenlabs(dur: int, save_to: Path) -> bool:
+        """调用 ElevenLabs 生成一段音效，返回是否成功"""
+        if not USE_ELEVENLABS_SFX or not ELEVENLABS_API_KEY:
+            return False
+        try:
+            resp = requests.post(
+                f"{_EL_BASE}/sound-generation",
+                json={
+                    "text": prompt,
+                    "duration_seconds": float(min(dur, MAX_EL_DURATION)),
+                    "prompt_influence": 0.8,  # 高影响系数确保氛围贴合提示词
+                },
+                headers={"xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+                timeout=90,
+            )
+            resp.raise_for_status()
+            save_to.parent.mkdir(parents=True, exist_ok=True)
+            save_to.write_bytes(resp.content)
+            logger.success(f"[Ambient SFX] ElevenLabs 片段生成成功: {save_to} ({dur}s)")
+            return True
+        except Exception as e:
+            logger.warning(f"[Ambient SFX] ElevenLabs 调用失败: {e}")
+            return False
+
+    # ElevenLabs 最长 22 秒，超过则分段生成再用 FFmpeg 拼接
+    import subprocess
+    if duration_seconds <= MAX_EL_DURATION:
+        success = _call_elevenlabs(duration_seconds, cache_path)
+    else:
+        # 分两段生成（22s + 余下部分）再拼接
+        seg1 = _SFX_LIBRARY_DIR / f"ambient_{theme_key}_seg1.mp3"
+        seg2 = _SFX_LIBRARY_DIR / f"ambient_{theme_key}_seg2.mp3"
+        remaining = duration_seconds - MAX_EL_DURATION
+
+        ok1 = _call_elevenlabs(MAX_EL_DURATION, seg1)
+        ok2 = _call_elevenlabs(remaining, seg2)
+
+        if ok1 and ok2:
+            # FFmpeg 拼接两段
+            concat_list = _SFX_LIBRARY_DIR / "ambient_concat.txt"
+            concat_list.write_text(f"file '{seg1.absolute()}'\nfile '{seg2.absolute()}'\n")
+            try:
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(concat_list),
+                    "-c:a", "libmp3lame",
+                    "-b:a", "192k",
+                    str(cache_path)
+                ], check=True, capture_output=True)
+                seg1.unlink(missing_ok=True)
+                seg2.unlink(missing_ok=True)
+                concat_list.unlink(missing_ok=True)
+                success = True
+            except subprocess.CalledProcessError as e:
+                logger.error(f"[Ambient SFX] FFmpeg 拼接失败: {e}")
+                success = False
+        else:
+            success = ok1  # 至少用第一段
+            if ok1 and seg1.exists():
+                import shutil
+                shutil.copy(seg1, cache_path)
+
+    if not success or not cache_path.exists():
+        # 完全兜底：用 FFmpeg lavfi 生成合成环境音（无 API 消耗）
+        logger.warning("[Ambient SFX] ElevenLabs 失败，使用 FFmpeg 合成恐怖医院环境音")
+        try:
+            # 合成：45Hz 心理压抑低频 + 白噪声 + 电磁蜂鸣
+            subprocess.run([
+                "ffmpeg", "-y", "-f", "lavfi",
+                "-i",
+                (
+                    "aevalsrc='"
+                    "sin(2*PI*45*t)*0.3 +"           # 45Hz 心理低频
+                    "random(0)*0.08 +"                # 白噪声
+                    "sin(2*PI*60*t)*0.15*sin(t*0.3)" # 灯管蜂鸣
+                    "'"
+                ),
+                "-t", str(duration_seconds),
+                "-c:a", "libmp3lame",
+                "-b:a", "128k",
+                str(cache_path)
+            ], check=True, capture_output=True)
+            logger.info(f"[Ambient SFX] FFmpeg 合成环境音已保存: {cache_path}")
+        except Exception as e:
+            logger.error(f"[Ambient SFX] FFmpeg 合成也失败了: {e}")
+            return None
+
+    return cache_path
 
 
 import redis

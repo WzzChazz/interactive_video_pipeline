@@ -1,0 +1,12 @@
+1
+00:00:00,100 --> 00:00:37,712
+speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="zh-CN"><voice name="zh-CN-XiaoxiaoNeural"><mstts:express-as style="fearful" styledegree="2.0"><prosody rate="+20%" pitch="+5Hz">这。
+
+2
+00:00:37,712 --> 00:00:39,212
+这不是我吗？
+
+3
+00:00:39,212 --> 00:00:43,400
+prosody></mstts:express-as></voice></speak
+

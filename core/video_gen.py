@@ -67,6 +67,9 @@ def _poll_and_download_atomic(
         try:
             status, data = fetch_status_fn()
         except Exception as e:
+            err_str = str(e)
+            if any(term in err_str for term in ["400", "401", "403", "1301", "不安全", "敏感", "FAIL"]):
+                raise VideoGenError(f"Task {task_id} failed permanently (Safety/Auth Error): {err_str}")
             logger.warning(f"API poll error for task {task_id}: {e}, retrying...")
             continue
             
@@ -402,7 +405,7 @@ def _aliyun_generate(image_path: str, save_path: Path, prompt: str = "") -> Path
     data = {}
     for attempt in range(2):
         try:
-            resp = requests.post(submit_url, headers=headers, json=payload, timeout=30)
+            resp = requests.post(submit_url, headers=headers, json=payload, timeout=120)
             data = resp.json()
             if "output" not in data or "task_id" not in data["output"]:
                 raise ValueError(f"No task_id in response: {data}")
@@ -438,35 +441,77 @@ def _aliyun_generate(image_path: str, save_path: Path, prompt: str = "") -> Path
     return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
 
 
-def generate_single_clip(scene_index: int, image_path: str, save_path: Path, camera_note: str = "") -> Path:
-    """生成单个视频片段，自带容灾兜底。"""
-    try:
-        if VIDEO_PROVIDER == "zhipu":
-            logger.info("Generating clip scene {} via Zhipu API...", scene_index)
-            return _zhipu_generate(image_path, save_path, prompt=camera_note)
-        elif VIDEO_PROVIDER == "aliyun":
-            logger.info("Generating clip scene {} via Aliyun Wan API...", scene_index)
-            return _aliyun_generate(image_path, save_path, prompt=camera_note)
-        elif VIDEO_PROVIDER == "hailuo":
-            logger.info("Generating clip scene {} via Hailuo API...", scene_index)
-            return _hailuo_generate(image_path, save_path, prompt=camera_note)
-        else:
-            logger.info("Generating clip scene {} via Kling API...", scene_index)
-            return _kling_generate(image_path, save_path, prompt=camera_note)
-    except Exception as e:
-        logger.error(f"Generative API failed for scene {scene_index}: {e}. Activating Fallback...")
-        from core.stock_footage_fallback import fetch_fallback_video
-        
-        keyword = "dark eerie background"
-        if camera_note:
-            words = camera_note.replace(",", " ").split()
-            if len(words) >= 2:
-                keyword = f"{words[0]} {words[1]} dark"
-                
-        return fetch_fallback_video(keyword, save_path, image_path=image_path)
+_PROVIDER_PRIORITY = ["aliyun", "kling", "siliconflow", "zhipu", "hailuo"]
+_QUOTA_ERRORS = ["arrearage", "429", "overdue", "quota", "balance", "insufficient", "rate limit", "token"]
 
-def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], episode_tag: str, episode_id: Optional[int] = None) -> dict[int, str]:
-    """并发将所有分镜静态图转换为视频片段（含断点续跑）。"""
+def generate_single_clip(scene_index: int, image_path: str, save_path: Path, camera_note: str = "") -> Path:
+    """生成单个视频片段，自带容灾兜底和多引擎自动降级。"""
+    providers = _PROVIDER_PRIORITY.copy()
+    if VIDEO_PROVIDER in providers:
+        providers.remove(VIDEO_PROVIDER)
+        providers.insert(0, VIDEO_PROVIDER)
+        
+    for provider in providers:
+        try:
+            logger.info(f"Generating clip scene {scene_index} via {provider.capitalize()} API...")
+            if provider == "zhipu":
+                return _zhipu_generate(image_path, save_path, prompt=camera_note)
+            elif provider == "aliyun":
+                return _aliyun_generate(image_path, save_path, prompt=camera_note)
+            elif provider == "hailuo":
+                return _hailuo_generate(image_path, save_path, prompt=camera_note)
+            elif provider == "siliconflow":
+                return _siliconflow_generate(image_path, save_path, prompt=camera_note)
+            else:
+                return _kling_generate(image_path, save_path, prompt=camera_note)
+        except Exception as e:
+            err_str = str(e).lower()
+            logger.warning(f"[VideoGen] {provider} failed for scene {scene_index}: {e}")
+            # Automatically try next provider on ANY failure (including quota)
+            continue
+            
+    logger.error(f"All generative APIs failed for scene {scene_index}. Activating Stock Footage Fallback...")
+    from core.stock_footage_fallback import fetch_fallback_video
+    
+    keyword = "dark eerie background"
+    if camera_note:
+        words = camera_note.replace(",", " ").split()
+        if len(words) >= 2:
+            keyword = f"{words[0]} {words[1]} dark"
+            
+    return fetch_fallback_video(keyword, save_path, image_path=image_path)
+
+def make_ken_burns_clip(image_path: str, save_path: Path, duration: float = 5.0, seed: int = 0) -> Path:
+    """把静图做成缓慢推拉(Ken Burns)的视频——治愈系免费替代图生视频，且慢镜更治愈。"""
+    import subprocess
+    from config.settings import VIDEO_WIDTH, VIDEO_HEIGHT
+    fps = 25
+    frames = max(1, int(duration * fps))
+    # 按 seed 交替缓慢放大/缩小，避免每条都一样
+    if seed % 2 == 0:
+        z = "min(zoom+0.0010,1.18)"
+    else:
+        z = "if(lte(zoom,1.0),1.18,max(zoom-0.0010,1.0))"
+    vf = (
+        f"scale={VIDEO_WIDTH*2}:{VIDEO_HEIGHT*2}:force_original_aspect_ratio=increase,"
+        f"crop={VIDEO_WIDTH*2}:{VIDEO_HEIGHT*2},"
+        f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"s={VIDEO_WIDTH}x{VIDEO_HEIGHT}:fps={fps}"
+    )
+    cmd = [
+        "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
+        "-vf", vf, "-t", str(duration), "-r", str(fps),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", str(save_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    logger.info(f"[KenBurns] 静图推拉片段生成: {save_path.name}")
+    return save_path
+
+
+def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], episode_tag: str, episode_id: Optional[int] = None, theme_key: str = "hospital_horror") -> dict[int, str]:
+    """并发将分镜静图转视频。治愈题材：静镜走免费Ken Burns，仅 needs_motion 的动作镜走图生视频。"""
+    from config.themes import THEMES
+    healing = not THEMES.get(theme_key, {}).get("is_serial", True)
     video_dir = STORAGE_TEMP_DIR / episode_tag / "clips"
     video_dir.mkdir(parents=True, exist_ok=True)
     results: dict[int, str] = {}
@@ -484,13 +529,38 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
 
     def _worker(scene: dict) -> tuple[int, str]:
         idx = scene["scene_index"]
-        camera_note = scene.get("camera_note", "")
         
-        if idx in [1, 2]:
-            camera_note += ", extremely fast zoom in, terrifying kubrick style symmetrical push"
+        # 提取更丰富的 visual_prompt
+        vp = scene.get("visual_prompt", {})
+        pose = vp.get("pose", "") if isinstance(vp, dict) else ""
+        camera_type = vp.get("type", "Cinematic shot") if isinstance(vp, dict) else ""
+        base_camera = scene.get("camera_note", "")
         
-        # 强制 AI 保持暗场光影，防止其自作主张提亮画面
-        camera_note += ", strictly keep the original dark lighting, very low exposure, pitch black shadows, do not brighten the scene, cinematic dark horror atmosphere"
+        # 按题材组装图生视频提示词（治愈 vs 恐怖）
+        if healing:
+            act = pose if pose else "sitting calmly with very subtle gentle motion"
+            camera_note = (
+                f"[Subject] A beautiful elegant woman and a cute chubby capybara. {act}.\\n"
+                f"[Environment] cozy warm home, soft natural daylight, pastel cream tones, plants.\\n"
+                f"[Action] {act}. Only subtle gentle motion, calm and slow.\\n"
+                f"[Camera] {camera_type}. {base_camera or 'Slow gentle push-in'}, steady, no shake.\\n"
+                f"[Atmosphere] cozy healing slice-of-life, warm soft lighting, wholesome and calm."
+            )
+        else:
+            # 采用 GitHub 开源项目推荐的结构化 Prompt 逻辑，动态组装恐怖悬疑镜头
+            action_text = pose if pose else "Exhibiting nervous tension, moving carefully."
+            cam_text = f"{camera_type}. {base_camera}" if base_camera else f"{camera_type}. Slow cinematic movement, subtle hand-held camera shake to induce anxiety."
+            camera_note = (
+                f"[Subject] Characters in focus. {action_text}\\n"
+                f"[Environment] Claustrophobic and pitch-black setting, illuminated only by a harsh, narrow light source. Heavy volumetric dust in the air.\\n"
+                f"[Action] {action_text}\\n"
+                f"[Camera] {cam_text}\\n"
+                f"[Atmosphere] Neo-noir suspense thriller, extreme low-key lighting, deep shadows, cinematic color grading, high contrast, mysterious and gripping."
+            )
+            # 脱敏过滤，把低级敏感词替换为中性悬疑词
+            unsafe_words = ["horror", "terrifying", "terror", "dead", "blood", "kill", "creepy", "scary", "ghost", "bloody"]
+            for w in unsafe_words:
+                camera_note = camera_note.replace(w, "suspense").replace(w.capitalize(), "Suspense")
         
         img_path = image_manifest.get(idx, "")
         if not img_path or not Path(img_path).exists():
@@ -506,12 +576,16 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
                     return idx, str(save_path)
 
         try:
-            generate_single_clip(
-                scene_index=idx,
-                image_path=img_path,
-                save_path=save_path,
-                camera_note=camera_note
-            )
+            if healing and not scene.get("needs_motion", False):
+                logger.info(f"Scene {idx}: 静镜 → Ken Burns 缓慢推拉（免费，省图生视频）")
+                make_ken_burns_clip(img_path, save_path, duration=5.0, seed=idx)
+            else:
+                generate_single_clip(
+                    scene_index=idx,
+                    image_path=img_path,
+                    save_path=save_path,
+                    camera_note=camera_note
+                )
             if episode_id is not None:
                 with get_session() as session:
                     asset = session.query(SceneAsset).filter_by(episode_id=episode_id, scene_index=idx).first()

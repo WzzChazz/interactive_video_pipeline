@@ -177,12 +177,27 @@ def stage_generate_script(branch: str, episode: Episode) -> dict:
 
     history_summary = build_history_summary(history_dicts)
 
+    # Fetch analytics from the immediate previous episode (Phase 4.3)
+    prev_analytics = None
+    with get_session() as session:
+        prev_ep = session.query(Episode).filter(
+            Episode.season_id == episode.season_id,
+            Episode.episode_number == episode.episode_number - 1,
+            Episode.status.in_([EpisodeStatus.COMPLETED, EpisodeStatus.PUBLISHED])
+        ).first()
+        if prev_ep:
+            prev_analytics = {
+                "completion_rate": prev_ep.completion_rate or 0.0,
+                "five_sec_retention": prev_ep.five_sec_retention or 0.0,
+            }
+
     script_obj = generate_script(
         branch=branch,
         history_summary=history_summary,
         season_id=episode.season_id,
         episode_number=episode.episode_number,
         engine="auto",
+        prev_analytics=prev_analytics,
         theme_key=episode.theme_key,
     )
 
@@ -237,7 +252,7 @@ def stage_generate_videos(script: dict, episode: Episode) -> dict:
         asset_manifest = json.loads(ep.asset_manifest_json or "{}")
 
     image_manifest = {int(k): v for k, v in asset_manifest.get("images", {}).items()}
-    clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id)
+    clip_manifest = generate_video_clips(scenes, image_manifest, tag, episode.id, theme_key=getattr(episode, "theme_key", "hospital_horror"))
 
     with get_session() as session:
         ep = session.get(Episode, episode.id)

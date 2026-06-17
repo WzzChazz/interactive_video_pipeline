@@ -43,5 +43,30 @@ THEMES = {
         },
         "audio_reverb_filter": "aecho=0.8:0.88:15:0.5",  # 狭小金属舱共鸣闷响
         "collection_name": "极地深渊"
+    },
+    "capybara_healing": {
+        "name": "水豚的治愈日常 (Capybara Healing)",
+        "genre": "Cozy Healing / Slice-of-Life / Wholesome ASMR-style short loop",
+        # 反差萌人设：高冷美女 × 佛系沙雕水豚。差异化卡位（猫已红海，水豚蓝海+自带喜感）
+        "background": "A cool, elegant young woman named Lin Xi (林溪) lives a slow, cozy life with her zen, perpetually unbothered pet capybara 'Tuan Tuan' (团团). There is NO plot, NO conflict, NO danger — only warm, comforting, slightly funny everyday healing moments (morning coffee by a sunny window, a lazy afternoon nap, sharing snacks, a rainy day indoors). The charm comes from the 反差 (contrast): her cold elegant beauty vs. the capybara's derpy佛系 deadpan calm. Pure 治愈 (healing) + comfort + gentle humor.",
+        "negative_prompt": "ABSOLUTELY NO horror, NO darkness, NO fear, NO tension, NO blood, NO sci-fi, NO sadness. NO suggestive or sexual posing. Keep everything warm, soft, cute, wholesome, and slow.",
+        "visual_style": "Cozy healing (治愈系) aesthetic. Warm soft natural light, cream and pastel tones, gentle golden-hour glow, soft bokeh, subtle film grain, cinematic shallow depth of field. Settings: sunny windowsill, cozy cafe, blanket nest, autumn park, lakeside, warm hot spring. Everything soft, warm, slow and comforting. NO harsh shadows, NO dark scenes.",
+        "character_prompt_lock": "1girl, Lin Xi, 24 years old beautiful elegant asian female, long straight black hair, cool calm aloof expression, fair clear skin, wearing a modest soft cream HIGH-NECK turtleneck knit sweater, fully covered, decent wholesome outfit, ALWAYS together with Tuan Tuan a chubby cute capybara with a deadpan derpy calm face, warm cozy healing aesthetic, highly detailed, consistent character",
+        "sfx_style": "gentle healing ambience: soft warm lo-fi / piano music, birdsong, light rain, water trickling, pages turning, a teacup clinking, a soft breeze. Cozy, warm, ASMR-like. NO scary sounds.",
+        "compliance": "- Wholesome, all-ages healing content ONLY. NO sexual or suggestive content, NO 擦边. Keep the female character elegant, tasteful, fully and modestly dressed. NO violence, NO fear.",
+        # 新格式标志位：画外音旁白 + BGM + 字幕；不对口型、不连载、不投票
+        "narration_mode": "voiceover_offscreen",  # 画外音旁白叙事，人物不正脸开口
+        "use_tts": True,                     # 保留配音，但仅作画外音旁白（非角色对口型）
+        "needs_lipsync": False,              # 唯一硬性禁用：不做对口型（杀恐怖谷嘴型）
+        "is_serial": False,                  # 单条自包含，非连载
+        "subtitle_on": True,                 # 配音 + 字幕双保险（静音党也能看）
+        "voice_id": "longxiaochun",          # 默认/旁白：温柔年轻女声
+        "voice_map": {
+            "旁白": "longxiaochun",   # 温柔年轻女声旁白
+            "林溪": "longxiaoxia",    # 高冷美女主人 → 冰冷御姐音
+            "团团": "longlaotie",     # 蠢萌水豚 → 深沉老爷爷音（反差萌笑点核弹）
+        },
+        "audio_reverb_filter": "",
+        "collection_name": "水豚的治愈日常"
     }
 }

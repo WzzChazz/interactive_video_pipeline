@@ -41,3 +41,9 @@ tqdm>=4.66.0               # 进度条（批量资产生成）
 python-slugify>=8.0.4      # 文件名安全处理
 PyJWT>=2.8.0
 PyJWT>=2.8.0
+
+# Audio FX & Kokoro TTS
+pedalboard
+kokoro
+misaki[zh]
+soundfile

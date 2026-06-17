@@ -10,6 +10,33 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
+import redis as _redis
+
+_redis_pool = _redis.ConnectionPool(
+    host='localhost', 
+    port=6379, 
+    db=0,
+    decode_responses=True, 
+    socket_timeout=2
+)
+
+def get_redis() -> _redis.Redis:
+    return _redis.Redis(connection_pool=_redis_pool)
+
+def get_chinese_font() -> str:
+    import platform
+    candidates = {
+        "Darwin": [
+            "/System/Library/Fonts/Supplemental/Songti.ttc",
+            "/System/Library/Fonts/PingFang.ttc"
+        ],
+        "Windows": ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simhei.ttf"],
+        "Linux": ["/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"],
+    }
+    for path in candidates.get(platform.system(), []):
+        if os.path.exists(path): return path
+    return ""  # Fallback gracefully
+
 # ── 项目根目录 ─────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -46,7 +73,7 @@ class AppSettings(BaseSettings):
     HAILUO_API_KEY: str = ""
     HAILUO_API_URL: str = "https://api.minimax.io/v1"
     ZHIPU_API_KEY: str = ""
-    VIDEO_PROVIDER: str = "kling"  # "kling" | "runway" | "hailuo" | "zhipu"
+    VIDEO_PROVIDER: str = "zhipu"  # "kling" | "runway" | "hailuo" | "zhipu" | "aliyun"
 
     # 5. 音频合成
     USE_ELEVENLABS_SFX: bool = False

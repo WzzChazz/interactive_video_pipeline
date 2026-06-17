@@ -59,6 +59,24 @@ from config.settings import (
 # Pydantic v2 数据模型
 # ──────────────────────────────────────────────────────────
 
+class VisualStyle(BaseModel):
+    aesthetic: str = Field(description="Aesthetic style (e.g. Cinematic horror, Anime, Realistic)")
+    colors: str = Field(description="Dominant colors and color grading")
+    lighting: str = Field(description="Lighting setup (e.g. Volumetric, flashlight, high contrast)")
+
+class CharacterDetail(BaseModel):
+    identity: str = Field(description="Who the character is (e.g. 25-year-old female doctor Lin Yue)")
+    appearance: str = Field(description="Strict facial and body features (e.g. pale skin, pure black hair, heavy dark circles)")
+    attire: str = Field(description="What the character is wearing")
+
+class VisualPromptSchema(BaseModel):
+    type: str = Field(description="Type of scene shot (e.g. Close-up, Wide shot, POV)")
+    character: CharacterDetail
+    pose: str = Field(description="Character's posture, action, and direction of gaze")
+    environment: str = Field(description="Detailed description of the background and props")
+    style: str = Field(description="Aesthetic style, colors, and lighting (e.g. Cinematic horror, high contrast, flashlight)")
+    constraints: str = Field(description="Negative prompts or strict constraints (e.g. NO blood, MUST look down)")
+
 class SceneShot(BaseModel):
     """
     单个分镜（Scene/Shot）的完整数据。
@@ -80,9 +98,9 @@ class SceneShot(BaseModel):
         description="情绪标签，驱动 ElevenLabs 语气（例如：neutral, angry, fearful, determined 等）"
     )
 
-    visual_prompt: str = Field(
-        ..., min_length=20, max_length=800,
-        description="图像生成 Prompt（英文）：场景、角色、光线、构图、风格关键词"
+    visual_prompt: VisualPromptSchema = Field(
+        ...,
+        description="Structured JSON prompt for image generation models (must be in English)"
     )
     camera_note: str = Field(
         default="static shot",
@@ -96,11 +114,15 @@ class SceneShot(BaseModel):
         default=False,
         description="标记该分镜是否为本集最高潮/最具视觉冲击力的画面（全集唯一，用于生成封面缩略图）"
     )
+    needs_motion: bool = Field(
+        default=False,
+        description="该分镜是否需要真实运动（如角色转头/眨眼/吃东西/明显动作）。True=走图生视频(花钱)；False=静图Ken Burns缓慢推拉(免费)。治愈题材默认 False，仅在有明确动作时设 True"
+    )
 
-    @field_validator("visual_prompt", "sfx_prompt", "camera_note", mode="before")
+    @field_validator("sfx_prompt", "camera_note", mode="before")
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
-        return v.strip()
+        return v.strip() if isinstance(v, str) else v
 
     @field_validator("dialogue", mode="before")
     @classmethod
@@ -140,10 +162,10 @@ class EpisodeScript(BaseModel):
     )
     chosen_branch: str = Field(..., description="本集驱动分支：A / B / INIT")
     scenes: list[SceneShot] = Field(
-        ..., min_length=4, max_length=7,
-        description="分镜列表，必须严格输出 6-7 个分镜以确保极致快节奏（35-40秒）"
+        ..., min_length=3, max_length=7,
+        description="分镜列表：恐怖连载 6-7 个（35-40秒）；治愈单条 5-7 个（20-30秒）"
     )
-    next_branches: NextBranches = Field(..., description="下一集 A/B 分支悬念预告")
+    next_branches: NextBranches = Field(..., description="下一集预告（恐怖=A/B投票；治愈=温柔明日预告）")
 
     @field_validator("scenes")
     @classmethod
@@ -164,9 +186,125 @@ class EpisodeScript(BaseModel):
 
 from config.themes import THEMES
 
+def _build_healing_system_prompt(theme: dict) -> str:
+    """
+    治愈/萌宠/反差萌 单条小剧场的系统提示词分支。
+    复用与恐怖线完全相同的 JSON schema，仅改变创作语义：
+      - dialogue   = 团团/林溪的拟人配音对话 或 旁白文案（中文短句），靠配音+字幕，NOT 对口型
+      - speaker    = "团团" / "林溪" / "旁白"，切镜头+配音呈现对话，人物不做精确对口型
+      - emotion    = 旁白语气（warm/gentle/playful），驱动 TTS 音色，NOT 对口型
+      - next_branches = 温柔的"明日预告"（不做投票/不做选项引导）
+      - is_serial=False：每条自包含，无集数、无前情依赖
+    """
+    return textwrap.dedent(f"""
+You are an elite Chinese short-video creative director specializing in COZY HEALING (治愈系)
+slice-of-life micro-skits for Douyin/Kuaishou in 2026. You write self-contained 20-30 second
+vignettes. There is NO plot tension, NO conflict, NO serialization. You operate under the
+"Comfort & 反差萌 (cute contrast)" logic.
+
+## CRITICAL OUTPUT RULES — VIOLATION WILL CAUSE SYSTEM FAILURE
+1. Your ENTIRE response MUST be a single, valid JSON object. NO markdown fences, NO preamble.
+2. Every string properly escaped. No trailing commas.
+3. All `visual_prompt`, `sfx_prompt`, `camera_note` fields MUST be in English.
+4. All `dialogue`, `episode_title`, `episode_summary`, teasers MUST be in Chinese.
+
+## DRAMA SETTING: {theme['name']}
+- Genre: {theme['genre']}
+- Background: {theme['background']}
+
+## CONTENT SAFETY
+{theme['compliance']}
+- {theme['negative_prompt']}
+
+## HEALING FORMAT GUIDELINES (MANDATORY)
+1. **GOLDEN 1 SECOND HOOK**: Scene 1 MUST instantly deliver the cutest / most 治愈 / most 反差萌
+   visual (e.g., the deadpan capybara face, the cozy warm scene). NO build-up. Hit cozy/cute instantly.
+2. **VOICED 拟人 DIALOGUE — BUT NO REALISTIC LIP-SYNC (CRITICAL)**: 团团 and 林溪 DO "talk", as a
+   funny anthropomorphic voice-over banter (exactly like 宠物拟人配音 videos). The VOICE + 字幕 carry
+   the dialogue — we do NOT realistically sync their mouths. Therefore:
+   - `speaker` is ONE of: "团团" (deadpan capybara), "林溪" (cool woman), or "旁白" (narrator).
+   - In `visual_prompt.pose`, do NOT depict precise talking / mouth-syncing; show gentle reactions
+     (a slow blink, a head tilt, sipping coffee). Quick cuts + voice + 字幕 carry the conversation.
+3. **反差萌 (CUTE CONTRAST) IS THE COMEDY ENGINE — 团团 IS A DEADPAN TROLL (皮/损)**: The capybara's
+   cute derpy face hides a lazy, sassy, scheming little troll. 团团's lines should be 欠/皮/凡尔赛/阴阳怪气
+   (gently savage, smug, shamelessly lazy) — internet-savvy (网感) one-liners, NOT gentle wisdom.
+   林溪 plays the straight-man who gets roasted or gives a savage comeback. Light mutual roasting banter.
+   Each skit MUST land at least one punchy/unexpected 反转 punchline (then a warm 'awww' beat to close).
+4. **TONE — 沙雕治愈 (silly-cute), NOT soft-gentle**: cozy AND cheeky (皮). Warm vibe, but the jokes
+   have bite. Aim to make the viewer snort-laugh at least once, THEN go 'awww'. Keep it wholesome
+   (no meanness that actually hurts, no 擦边) — savage but loving, like roasting your lazy best friend.
+- `dialogue`: ONE short Chinese line per scene (≤18 chars) — either 团团/林溪's 拟人 banter or 旁白
+  narration. May be "" for a pure visual breather. Make it 皮! Example: 团团:"按时摆烂，养生第一步。"
+  林溪:"你这辈子就没努力过。" 团团:"努力会传染，离我远点。"
+- `emotion`: delivery tone driving TTS color — "deadpan"/"playful" (团团), "gentle"/"cool" (林溪),
+  "warm"/"soft" (旁白).
+- Visual prompts: {theme['visual_style']}
+- CHARACTER LOCK: every `visual_prompt` MUST start EXACTLY with: "{theme.get('character_prompt_lock','')}"
+- The capybara 团团 MUST appear (or be implied) in most scenes — it is the IP anchor.
+- camera_note: gentle only — "[slow push in]", "[soft pan]", "[gentle tilt]". NO shaky/fast moves.
+- needs_motion (COST CONTROL): set TRUE only for scenes with REAL action (团团 eating / turning its head /
+  blinking / reaching). Calm shots (just sitting, gazing, holding a cup) → FALSE → free Ken Burns slow zoom.
+  Aim for AT MOST 2 scenes with needs_motion=true per skit, to save 图生视频 cost.
+- sfx_prompt (English): {theme['sfx_style']}
+- Total scenes: 5-7 (target ~20-30 seconds). Enough room for setup → banter → punchline.
+- EVERY scene MUST advance a joke beat or an emotional beat. NO filler / NO dead shots — if a scene
+  doesn't add a laugh or a warm beat, cut it. Tight pacing, but let the comedic timing breathe.
+
+## REPURPOSED FIELDS (keep schema valid, but NO voting)
+- `chosen_branch`: always "INIT".
+- `is_climax`: mark the single cutest / most shareable 反差萌 shot (used for the cover thumbnail).
+- `next_branches`: NOT a vote. Use them as a gentle "明日预告" (tomorrow's cozy vignette) to build
+  关注. branch_a_teaser & branch_b_teaser = two soft teasers of possible next cozy moments
+  (e.g., "明天：团团第一次见到雪" / "明天：雨天的慵懒午后"). DO NOT use ANY voting CTA
+    (no number-pressing, no A/B choice, no 投票). Just a soft teaser to encourage 关注.
+
+## REQUIRED JSON SCHEMA
+""" + """{
+  "episode_title": "string (Chinese, ≤50 chars, cozy & cute, NO episode number)",
+  "episode_summary": "string (Chinese, 20-300 chars, warm caption with healing hashtags)",
+  "cover_teaser": "string (Chinese, ≤10 chars, cute hook)",
+  "chosen_branch": "INIT",
+  "scenes": [
+    {
+      "scene_index": 1,
+      "dialogue": "string (Chinese 拟人 banter or narration, ≤18 chars, or empty)",
+      "english_dialogue": "string (English translation of the line)",
+      "speaker": "团团 | 林溪 | 旁白",
+      "emotion": "string (warm | gentle | playful | soft)",
+      "visual_prompt": {
+        "type": "string (e.g., Close-up, Cozy wide shot)",
+        "character": {
+          "identity": "string",
+          "appearance": "string (Strict features for consistency)",
+          "attire": "string"
+        },
+        "pose": "string (gentle action; NEVER speaking to camera)",
+        "environment": "string (warm cozy setting)",
+        "style": "string (soft warm healing lighting/colors)",
+        "constraints": "string (NO horror, NO darkness, NO 擦边)"
+      },
+      "camera_note": "string (English, e.g. [slow push in])",
+      "sfx_prompt": "string (English healing ambience)",
+      "action_timestamp": "float (0.5 to 4.0)",
+      "is_climax": false,
+      "needs_motion": false
+    }
+  ],
+  "next_branches": {
+    "branch_a_teaser": "string (温柔的明日预告A，NO投票，≤20字)",
+    "branch_b_teaser": "string (温柔的明日预告B，NO投票，≤20字)"
+  }
+}
+""").strip()
+
+
 def _build_system_prompt(theme_key: str = "hospital_horror") -> str:
     theme = THEMES.get(theme_key, THEMES["hospital_horror"])
-    
+
+    # 治愈/非连载题材 → 画外音旁白分支（无投票 / 无对口型 / 无连载）
+    if not theme.get("is_serial", True):
+        return _build_healing_system_prompt(theme)
+
     return textwrap.dedent(f"""
 You are an elite Chinese screenwriter and storyboard director specializing in
 ultra-short interactive drama (短剧) for TikTok (Douyin) in 2026. Your job is to generate
@@ -229,7 +367,18 @@ the complete script and storyboard for the next episode. You operate under the "
       "english_dialogue": "string (English translation of dialogue)",
       "speaker": "string (character name, or empty string for narration)",
       "emotion": "string (e.g. neutral, happy, sad, angry, determined, shocked, cold)",
-      "visual_prompt": "string (English, ≥20 chars, strict visual consistency lock)",
+      "visual_prompt": {
+        "type": "string (e.g., Close-up, Wide shot)",
+        "character": {
+          "identity": "string (e.g., 25-year-old female doctor Lin Yue)",
+          "appearance": "string (Strict facial/body features to maintain consistency)",
+          "attire": "string (Clothing)"
+        },
+        "pose": "string (Character action/posture)",
+        "environment": "string (Background/props)",
+        "style": "string (Lighting/colors/aesthetic)",
+        "constraints": "string (Negative prompts, e.g., NO blood)"
+      },
       "camera_note": "string (English, e.g. [Fast Zoom in])",
       "sfx_prompt": "string (English, comma-separated sound effect names, e.g. 'door_creak, footsteps')",
       "action_timestamp": "float (The exact second, e.g., 2.5, when the main visual action/sfx occurs in this scene's video. Range: 0.5 to 5.0)"
@@ -384,11 +533,26 @@ def _build_user_prompt(
     episode_number: int,
     character_profiles: Optional[str] = None,
     prev_analytics: Optional[dict] = None,
+    theme_key: str = "hospital_horror",
 ) -> str:
     """
     构建发送给 LLM 的 User Prompt。
     包含：历史摘要、角色设定、当前集信息、分支指令。
     """
+    # 治愈/非连载题材：自包含单条小剧场（无历史/无投票/无集数依赖）
+    _t = THEMES.get(theme_key, {})
+    if not _t.get("is_serial", True):
+        topics = "周一赖床 / 下雨天 / 嚷着要减肥 / 加班回家 / 抢零食 / 第一次见到雪 / 夏天太热 / 想点外卖"
+        return textwrap.dedent(f"""
+        请为短剧《{_t.get('name', '治愈日常')}》创作【一条全新的、自包含的】单条小剧场。
+        - 时长 20-30 秒，5-7 个分镜（每个约 4 秒）。
+        - 自由选一个温暖又好笑的日常情景（如：{topics}）。
+        - 团团（佛系蠢萌水豚，深沉老爷爷音）× 林溪（高冷美女主人，冰冷御姐音）用拟人配音对话，
+          靠反差萌 + 皮的吐槽制造笑点；结尾来一句温柔收尾，沙雕落回治愈。
+        - 不要投票、不要集数标记、不要恐怖元素；next_branches 用温柔的"明日预告"。
+        - 严格只输出纯 JSON，不含任何额外文字。
+        """).strip()
+
     parts = [
         f"## 当前集信息",
         f"- 季份：第 {season_id} 季",
@@ -484,6 +648,7 @@ def generate_script(
         episode_number=episode_number,
         character_profiles=character_profiles,
         prev_analytics=prev_analytics,
+        theme_key=theme_key,
     )
 
     logger.info(
@@ -500,11 +665,19 @@ def generate_script(
             data["chosen_branch"] = branch
             script = EpisodeScript.model_validate(data)
             
-            # Critic Agent 打分
-            critic_prompt = f"Review this horror script json. Are visual/sfx prompts in English? Is it scary/thrilling? Is the JSON valid? If PERFECT, output 'PASS'. Otherwise output 'FAIL: <reasons>'.\n\nScript:\n{script.model_dump_json()}"
-            critique = _invoke_critic(critic_prompt, engine)
+            # Phase 3.1: Cached Critic Agent（按题材切换评审标准）
+            if not THEMES.get(theme_key, {}).get("is_serial", True):
+                critic_prompt = f"Review this cozy HEALING comedy script json. Are visual/sfx prompts in English? Is it cute, funny and wholesome with 团团/林溪 banter and NO horror/darkness? Is the JSON valid? If PERFECT, output 'PASS'. Otherwise output 'FAIL: <reasons>'.\n\nScript:\n{script.model_dump_json()}"
+            else:
+                critic_prompt = f"Review this horror script json. Are visual/sfx prompts in English? Is it scary/thrilling? Is the JSON valid? If PERFECT, output 'PASS'. Otherwise output 'FAIL: <reasons>'.\n\nScript:\n{script.model_dump_json()}"
+            critique = _invoke_critic_cached(critic_prompt, engine)
             
-            if "PASS" in critique.upper():
+            # Phase 3.2: Visual Diversity Check
+            diversity_issues = _check_visual_diversity(script.scenes)
+            if diversity_issues:
+                critique += " FAIL: " + " | ".join(diversity_issues)
+            
+            if "FAIL" not in critique.upper() and "PASS" in critique.upper():
                 logger.success(f"Critic approved on attempt {attempt+1}.")
                 break
             else:
@@ -547,6 +720,26 @@ def _invoke_critic(user_prompt: str, engine: str) -> str:
     except Exception as e:
         logger.warning(f"Critic API failed: {e}. Defaulting to PASS.")
         return "PASS"
+
+import hashlib
+_critic_cache: dict[str, str] = {}
+
+def _invoke_critic_cached(user_prompt: str, engine: str) -> str:
+    """带缓存的 Critic Agent（Phase 3.1）"""
+    key = hashlib.md5(user_prompt.encode()).hexdigest()[:16]
+    if key not in _critic_cache:
+        _critic_cache[key] = _invoke_critic(user_prompt, engine)
+    return _critic_cache[key]
+
+def _check_visual_diversity(scenes: list[SceneShot]) -> list[str]:
+    """视觉多样性检测（Phase 3.2）"""
+    issues = []
+    for i in range(1, len(scenes)):
+        c = set(scenes[i].visual_prompt.environment.lower().split())
+        p = set(scenes[i-1].visual_prompt.environment.lower().split())
+        if c and len(c & p) / len(c | p) > 0.65:
+            issues.append(f"Scene {i+1} environment too similar to Scene {i}")
+    return issues
 
 
 @retry(
