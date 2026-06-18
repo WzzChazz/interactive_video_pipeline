@@ -241,10 +241,26 @@ vignettes. There is NO plot tension, NO conflict, NO serialization. You operate 
 - Visual prompts: {theme['visual_style']}
 - CHARACTER LOCK: every `visual_prompt` MUST start EXACTLY with: "{theme.get('character_prompt_lock','')}"
 - The capybara 团团 MUST appear (or be implied) in most scenes — it is the IP anchor.
+- SETTING comes FROM THE STORY — and VARY it across episodes: sunny kitchen, cozy bed/bedroom, a
+  balcony, a park bench, a cafe corner, a rainy-day window nook, a bathtub, a picnic mat... Do NOT
+  default to a living room every time; pick whatever fits the day's little story and describe it
+  richly in `environment`.
+- SHOT VARIETY & SPATIAL DEPTH (fixes cramped framing): do NOT make every shot a tight close-up of
+  both crammed together. OPEN with a WIDE establishing shot of the chosen setting
+  (type="wide establishing shot") showing the space with depth and both characters placed within it;
+  then mix in medium and close shots. At least 2 wide spatial shots per skit.
+- 团团 STAYS PROMINENT: even in wide shots keep Tuan Tuan clearly visible and LARGE in the FOREGROUND/
+  MIDGROUND — never tiny or far in the distance (a tiny capybara becomes an unrecognizable blob). The
+  capybara is the star.
+- CONTINUITY & NARRATIVE FLOW — ONE continuous moment, NOT 5 random gags: all scenes happen in the
+  SAME chosen place and continuous time, with physically connected actions that follow logically
+  (establish the scene → a character acts → the other reacts → it resolves). Keep positions coherent
+  shot to shot — don't teleport them (e.g. far-apart in one shot then cheek-to-cheek the next); mainly
+  the CAMERA moves, not their whole world.
 - camera_note: gentle only — "[slow push in]", "[soft pan]", "[gentle tilt]". NO shaky/fast moves.
-- needs_motion (COST CONTROL): set TRUE only for scenes with REAL action (团团 eating / turning its head /
-  blinking / reaching). Calm shots (just sitting, gazing, holding a cup) → FALSE → free Ken Burns slow zoom.
-  Aim for AT MOST 2 scenes with needs_motion=true per skit, to save 图生视频 cost.
+- needs_motion: set TRUE for any scene where 团团 or 林溪 is SPEAKING or doing an action — so the
+  characters visibly move/gesture while talking (feels alive). Set FALSE only for a pure scenic
+  breather shot with NO dialogue. Most dialogue scenes → TRUE.
 - sfx_prompt (English): {theme['sfx_style']}
 - Total scenes: 5-7 (target ~20-30 seconds). Enough room for setup → banter → punchline.
 - EVERY scene MUST advance a joke beat or an emotional beat. NO filler / NO dead shots — if a scene

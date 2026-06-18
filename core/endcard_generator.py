@@ -32,7 +32,8 @@ def generate_typewriter_endcard(
     fps: int = 30,
     duration_sec: float = 6.0,
     chars_per_sec: float = 12.0,
-    background_image_path: str | None = None
+    background_image_path: str | None = None,
+    healing: bool = False,
 ) -> Path:
     
     output_path = Path(output_path)
@@ -50,7 +51,7 @@ def generate_typewriter_endcard(
 
     margin_x = 80
     max_text_width = VIDEO_WIDTH - margin_x * 2
-    title = "做出你的选择："
+    title = "明日预告" if healing else "做出你的选择："
     
     lines_a = wrap_text(branch_a, font, max_text_width)
     lines_b = wrap_text(branch_b, font, max_text_width)
@@ -247,6 +248,17 @@ def generate_typewriter_endcard(
         audio[thud_idx:thud_idx+thud_length, 0] += (sub_drop + scrape)
         audio[thud_idx:thud_idx+thud_length, 1] += (sub_drop + scrape)
         
+    # 治愈片尾：丢弃上面所有恐怖音效（打字机/嗡鸣/坠落），换成一声柔和风铃
+    if healing:
+        audio = np.zeros((total_samples, 2), dtype=np.float32)
+        chime_len = min(int(0.8 * sample_rate), total_samples)
+        if chime_len > 0:
+            t_c = np.linspace(0, chime_len / sample_rate, chime_len, False)
+            chime = (0.14 * np.sin(2 * np.pi * 880 * t_c) +
+                     0.07 * np.sin(2 * np.pi * 1320 * t_c)) * np.exp(-t_c * 3.5)
+            audio[:chime_len, 0] += chime
+            audio[:chime_len, 1] += chime
+
     # 音量归一化防爆音
     max_val = np.max(np.abs(audio))
     if max_val > 0:

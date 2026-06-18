@@ -17,6 +17,10 @@ from config.settings import (
     HAILUO_API_KEY,
     HAILUO_API_URL,
     ZHIPU_API_KEY,
+    JIMENG_API_KEY,
+    JIMENG_API_URL,
+    JIMENG_MODEL,
+    KEN_BURNS_ONLY,
     VIDEO_PROVIDER,
     API_MAX_RETRIES,
 )
@@ -45,8 +49,8 @@ def check_video_brightness(video_path: Path) -> None:
         lines = [float(x.strip()) for x in res.stdout.split() if x.strip()]
         if not lines: return
         avg_y = sum(lines) / len(lines)
-        if avg_y > 150:  # 0-255，大于 150 认为偏亮，破坏恐怖氛围
-            logger.error(f"🚨 [质量警告] 视频 {video_path.name} 亮度过高 (YAVG={avg_y:.1f} > 150)！可能破坏了极度昏暗的环境氛围。")
+        if avg_y > 150:  # 0-255，仅作信息记录（治愈题材本就明亮，不再当作错误）
+            logger.debug(f"[亮度] 视频 {video_path.name} 偏亮 (YAVG={avg_y:.1f})")
         else:
             logger.debug(f"[质量检查] 视频 {video_path.name} 亮度合规 (YAVG={avg_y:.1f})")
     except Exception as e:
@@ -441,10 +445,75 @@ def _aliyun_generate(image_path: str, save_path: Path, prompt: str = "") -> Path
     return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
 
 
-_PROVIDER_PRIORITY = ["aliyun", "kling", "siliconflow", "zhipu", "hailuo"]
+@retry(retry=retry_if_exception_type(VideoGenError), stop=stop_after_attempt(API_MAX_RETRIES), wait=wait_exponential(min=10, max=60), reraise=True)
+def _seedance_generate_one(image_path: str, save_path: Path, prompt: str, model: str) -> Path:
+    """即梦 Seedance 图生视频（火山引擎 Ark）单个模型。提交任务 → 轮询 → 下载。"""
+    if not JIMENG_API_KEY:
+        raise VideoGenError("JIMENG_API_KEY (火山引擎 Ark) 未在 .env 配置")
+
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {JIMENG_API_KEY}"}
+    # 4K 图直接 base64 上传又慢又没必要（Seedance 内部自定分辨率）→ 先缩到 1280 宽
+    import subprocess, tempfile
+    _small = Path(tempfile.gettempdir()) / f"sd_in_{Path(image_path).stem}.jpg"
+    try:
+        subprocess.run(["ffmpeg", "-y", "-i", str(image_path), "-vf", "scale=1280:-2",
+                        "-q:v", "3", str(_small)], capture_output=True, timeout=30)
+        _src = str(_small) if (_small.exists() and _small.stat().st_size > 0) else str(image_path)
+    except Exception:
+        _src = str(image_path)
+    img_data_uri = _image_to_base64_data_uri(_src)
+    # 治愈系：竖屏 9:16、5 秒、轻微运动；Seedance 用 --ratio/--duration 文本参数
+    text = (prompt.strip() or "gentle subtle motion, cozy and calm") + " --ratio 9:16 --duration 5"
+    payload = {
+        "model": JIMENG_MODEL,
+        "content": [
+            {"type": "text", "text": text},
+            {"type": "image_url", "image_url": {"url": img_data_uri}},
+        ],
+    }
+
+    logger.info(f"Submitting Seedance(即梦) I2V task for: {Path(image_path).name}")
+    resp = None
+    for attempt in range(5):
+        try:
+            resp = requests.post(JIMENG_API_URL, json=payload, headers=headers, timeout=60)
+            break
+        except Exception as e:
+            if attempt == 4:
+                raise VideoGenError(f"Seedance submit failed after 5 attempts: {e}")
+            time.sleep(5)
+
+    try:
+        rd = resp.json()
+    except Exception:
+        raise VideoGenError(f"Seedance submit invalid JSON: {resp.text[:300]}")
+    if resp.status_code != 200:
+        raise VideoGenError(f"Seedance submit failed: {rd}")
+    task_id = rd.get("id") or rd.get("task_id")
+    if not task_id:
+        raise VideoGenError(f"Seedance submit returned no task id: {rd}")
+    logger.info(f"Seedance task submitted. Task ID: {task_id}")
+
+    def fetch_status():
+        q = requests.get(f"{JIMENG_API_URL}/{task_id}", headers=headers, timeout=15)
+        q.raise_for_status()
+        d = q.json()
+        st = (d.get("status") or "").lower()
+        # Ark 用 succeeded/failed/running/queued，归一化到 poll helper 认的词
+        st = {"succeeded": "success", "failed": "failed"}.get(st, st)
+        return st, d
+
+    def extract_url(d):
+        content = d.get("content") or {}
+        return content.get("video_url") or d.get("video_url")
+
+    return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
+
+
+_PROVIDER_PRIORITY = ["seedance", "aliyun", "kling", "siliconflow", "zhipu", "hailuo"]
 _QUOTA_ERRORS = ["arrearage", "429", "overdue", "quota", "balance", "insufficient", "rate limit", "token"]
 
-def generate_single_clip(scene_index: int, image_path: str, save_path: Path, camera_note: str = "") -> Path:
+def generate_single_clip(scene_index: int, image_path: str, save_path: Path, camera_note: str = "", theme_key: str = "hospital_horror") -> Path:
     """生成单个视频片段，自带容灾兜底和多引擎自动降级。"""
     providers = _PROVIDER_PRIORITY.copy()
     if VIDEO_PROVIDER in providers:
@@ -454,7 +523,9 @@ def generate_single_clip(scene_index: int, image_path: str, save_path: Path, cam
     for provider in providers:
         try:
             logger.info(f"Generating clip scene {scene_index} via {provider.capitalize()} API...")
-            if provider == "zhipu":
+            if provider == "seedance":
+                return _seedance_generate(image_path, save_path, prompt=camera_note)
+            elif provider == "zhipu":
                 return _zhipu_generate(image_path, save_path, prompt=camera_note)
             elif provider == "aliyun":
                 return _aliyun_generate(image_path, save_path, prompt=camera_note)
@@ -473,19 +544,24 @@ def generate_single_clip(scene_index: int, image_path: str, save_path: Path, cam
     logger.error(f"All generative APIs failed for scene {scene_index}. Activating Stock Footage Fallback...")
     from core.stock_footage_fallback import fetch_fallback_video
     
-    keyword = "dark eerie background"
-    if camera_note:
-        words = camera_note.replace(",", " ").split()
-        if len(words) >= 2:
-            keyword = f"{words[0]} {words[1]} dark"
-            
+    from config.themes import THEMES
+    _healing = not THEMES.get(theme_key, {}).get("is_serial", True)
+    if _healing:
+        keyword = "cozy warm cute pet, soft daylight"
+    else:
+        keyword = "dark eerie background"
+        if camera_note:
+            words = camera_note.replace(",", " ").split()
+            if len(words) >= 2:
+                keyword = f"{words[0]} {words[1]} dark"
+
     return fetch_fallback_video(keyword, save_path, image_path=image_path)
 
 def make_ken_burns_clip(image_path: str, save_path: Path, duration: float = 5.0, seed: int = 0) -> Path:
     """把静图做成缓慢推拉(Ken Burns)的视频——治愈系免费替代图生视频，且慢镜更治愈。"""
     import subprocess
     from config.settings import VIDEO_WIDTH, VIDEO_HEIGHT
-    fps = 25
+    fps = 30  # 与 API 片段标准化后的 30fps 对齐，避免混合拼接时帧率不一致导致卡顿
     frames = max(1, int(duration * fps))
     # 按 seed 交替缓慢放大/缩小，避免每条都一样
     if seed % 2 == 0:
@@ -576,15 +652,17 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
                     return idx, str(save_path)
 
         try:
-            if healing and not scene.get("needs_motion", False):
-                logger.info(f"Scene {idx}: 静镜 → Ken Burns 缓慢推拉（免费，省图生视频）")
+            if healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
+                _why = "验证期全Ken Burns" if KEN_BURNS_ONLY else "静镜"
+                logger.info(f"Scene {idx}: {_why} → Ken Burns 缓慢推拉（免费）")
                 make_ken_burns_clip(img_path, save_path, duration=5.0, seed=idx)
             else:
                 generate_single_clip(
                     scene_index=idx,
                     image_path=img_path,
                     save_path=save_path,
-                    camera_note=camera_note
+                    camera_note=camera_note,
+                    theme_key=theme_key,
                 )
             if episode_id is not None:
                 with get_session() as session:

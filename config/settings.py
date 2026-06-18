@@ -73,7 +73,13 @@ class AppSettings(BaseSettings):
     HAILUO_API_KEY: str = ""
     HAILUO_API_URL: str = "https://api.minimax.io/v1"
     ZHIPU_API_KEY: str = ""
-    VIDEO_PROVIDER: str = "zhipu"  # "kling" | "runway" | "hailuo" | "zhipu" | "aliyun"
+    JIMENG_API_KEY: str = ""  # 火山引擎 Ark Key（即梦 Seedance 图生视频）
+    JIMENG_API_URL: str = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
+    JIMENG_MODEL: str = "doubao-seedance-1-0-lite-i2v-250428"  # Seedance Lite i2v（便宜档，治愈轻微运动够用）
+    JIMENG_IMAGE_MODEL: str = "doubao-seedream-4-0-250828"  # 即梦 Seedream 4.0（文生图 + 参考图锁脸）
+    IP_REFERENCE_IMAGE: str = ""  # 固定IP定妆照路径(林溪+团团)；设了且有即梦key→每张图走Seedream参考图锁脸
+    KEN_BURNS_ONLY: bool = True  # 验证期=True：治愈所有镜头都走免费Ken Burns(不花图生视频钱)；想开动作镜改False
+    VIDEO_PROVIDER: str = "seedance"  # seedance(即梦) | zhipu | kling | hailuo | aliyun
 
     # 5. 音频合成
     USE_ELEVENLABS_SFX: bool = False
@@ -126,6 +132,12 @@ RUNWAY_API_URL = _cfg.RUNWAY_API_URL
 HAILUO_API_KEY = _cfg.HAILUO_API_KEY
 HAILUO_API_URL = _cfg.HAILUO_API_URL
 ZHIPU_API_KEY = _cfg.ZHIPU_API_KEY
+JIMENG_API_KEY = _cfg.JIMENG_API_KEY
+JIMENG_API_URL = _cfg.JIMENG_API_URL
+JIMENG_MODEL = _cfg.JIMENG_MODEL
+JIMENG_IMAGE_MODEL = _cfg.JIMENG_IMAGE_MODEL
+IP_REFERENCE_IMAGE = _cfg.IP_REFERENCE_IMAGE
+KEN_BURNS_ONLY = _cfg.KEN_BURNS_ONLY
 VIDEO_PROVIDER = _cfg.VIDEO_PROVIDER
 USE_ELEVENLABS_SFX = _cfg.USE_ELEVENLABS_SFX
 ELEVENLABS_API_KEY = _cfg.ELEVENLABS_API_KEY

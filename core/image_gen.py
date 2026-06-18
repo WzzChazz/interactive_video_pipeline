@@ -37,6 +37,9 @@ from config.settings import (
     API_MAX_RETRIES,
     VIDEO_WIDTH,
     VIDEO_HEIGHT,
+    JIMENG_API_KEY,
+    JIMENG_IMAGE_MODEL,
+    IP_REFERENCE_IMAGE,
 )
 from database.db_session import get_session
 from database.models import SceneAsset
@@ -48,6 +51,56 @@ from database.models import SceneAsset
 
 class ImageGenError(Exception):
     pass
+
+
+def _img_to_data_uri(image_path: str) -> str:
+    """本地图片 → base64 data URI（即梦参考图用）。"""
+    import base64, mimetypes
+    mime = mimetypes.guess_type(image_path)[0] or "image/png"
+    with open(image_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return f"data:{mime};base64,{b64}"
+
+
+@retry(
+    retry=retry_if_exception_type(ImageGenError),
+    stop=stop_after_attempt(API_MAX_RETRIES),
+    wait=wait_exponential(multiplier=2, min=4, max=30),
+    reraise=True,
+)
+def _call_jimeng_seedream(prompt: str, ref_image_path: str = "") -> str:
+    """
+    即梦 Seedream 4.0 生图（火山引擎 Ark），支持参考图锁定角色一致性。
+    传入定妆照 ref_image_path → 每张分镜图保持同一个林溪+团团。返回图片 URL。
+    """
+    if not JIMENG_API_KEY:
+        raise ImageGenError("JIMENG_API_KEY (火山引擎 Ark) 未配置")
+    url = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    headers = {"Authorization": f"Bearer {JIMENG_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": JIMENG_IMAGE_MODEL,
+        "prompt": prompt,
+        "size": "2160x3840",          # 4K 竖屏 9:16，匹配视频分辨率，宽镜头小脸也清晰不糊
+        "response_format": "url",
+        "watermark": False,
+    }
+    # 参考图锁脸：把定妆照作为参考输入（Seedream 4.0 支持图生图/角色一致）
+    if ref_image_path and os.path.exists(ref_image_path):
+        payload["image"] = _img_to_data_uri(ref_image_path)
+        logger.info(f"[Seedream] 启用参考图锁脸: {Path(ref_image_path).name}")
+    try:
+        resp = requests.post(url, json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        data = resp.json()
+        img_url = (data.get("data") or [{}])[0].get("url")
+        if not img_url:
+            raise ImageGenError(f"Seedream 未返回图片URL: {resp.text[:200]}")
+        return img_url
+    except ImageGenError:
+        raise
+    except Exception as e:
+        raise ImageGenError(f"Seedream 生图失败: {e}") from e
+
 
 @retry(
     retry=retry_if_exception_type(ImageGenError),
@@ -295,6 +348,9 @@ def generate_single_image(
     if isinstance(visual_prompt, dict):
         # 提取核心画面描述元素拼接成自然语言提示词（而非丢给生图API整个JSON结构）
         parts = []
+        # 景别/镜头类型放最前（wide shot/close-up 决定空间感；之前漏了 type 导致全是近景）
+        if visual_prompt.get("type"):
+            parts.append(str(visual_prompt["type"]))
         # 角色描述常嵌在 character 子对象里（identity/appearance/attire），必须先展开，否则主角不被画出
         char = visual_prompt.get("character")
         if isinstance(char, dict):
@@ -313,12 +369,16 @@ def generate_single_image(
         final_prompt = str(visual_prompt)
 
     logger.info("Generating image for scene {}: {:.100s}...", scene_index, final_prompt)
-    # 生图供应商容灾链：智谱 CogView（已充值/无水印）→ 硅基流动 Flux → 通义万相，哪个能用用哪个
+    # 生图供应商容灾链
     _provider_chain = [
         ("Zhipu CogView", _call_zhipu_cogview),
         ("SiliconFlow Flux", _call_siliconflow_flux),
         ("DashScope Wanx", _call_dashscope_wanx),
     ]
+    # IP 锁脸：有定妆照 + 即梦 key 时，优先走 Seedream 参考图（保持团团/林溪跨镜一致）
+    _ref = character_ref_url or IP_REFERENCE_IMAGE
+    if _ref and JIMENG_API_KEY and os.path.exists(_ref):
+        _provider_chain.insert(0, ("Jimeng Seedream(参考图锁脸)", lambda p: _call_jimeng_seedream(p, _ref)))
     img_url = None
     _errs = []
     for _name, _fn in _provider_chain:

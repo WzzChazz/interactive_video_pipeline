@@ -59,13 +59,21 @@ def generate_word_level_vtt(audio_path: str | Path, output_vtt_path: str | Path)
     segments, info = model.transcribe(str(audio_path), word_timestamps=True, language="zh")
     
     vtt_lines = ["WEBVTT\n"]
-    
+
+    try:
+        import zhconv
+    except Exception:
+        zhconv = None
+
     for segment in segments:
         for word in segment.words:
             # 去除前后空格
             text = word.word.strip()
             if not text:
                 continue
+            # Whisper 常把中文识别成繁体 → 强制转简体
+            if zhconv is not None:
+                text = zhconv.convert(text, "zh-cn")
                 
             start_ts = format_timestamp(word.start)
             end_ts = format_timestamp(word.end)

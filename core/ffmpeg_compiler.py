@@ -235,49 +235,24 @@ def _generate_srt(scenes: list[dict], scene_durations: list[float], audio_manife
         if not text:
             continue
             
-        audio_map = audio_manifest.get(str(idx), audio_manifest.get(idx, {}))
-        voice_path = audio_map.get("voice", "")
-        vtt_path = Path(voice_path).with_suffix(".vtt") if voice_path else None
-        
-        if lang == "cn" and vtt_path and vtt_path.exists():
-            # 使用高精度 VTT 字幕
-            vtt_content = vtt_path.read_text(encoding="utf-8")
-            vtt_lines = vtt_content.splitlines()
-            v_i = 0
-            while v_i < len(vtt_lines):
-                line = vtt_lines[v_i].strip()
-                if "-->" in line:
-                    start_str, end_str = line.split("-->")
-                    start_s = _parse_time_to_seconds(start_str) + start
-                    end_s = _parse_time_to_seconds(end_str) + start
-                    
-                    v_i += 1
-                    sub_text = ""
-                    while v_i < len(vtt_lines) and vtt_lines[v_i].strip() != "":
-                        sub_text += vtt_lines[v_i].strip() + "\n"
-                        v_i += 1
-                    sub_text = sub_text.strip()
-                    
-                    # 避免字幕溢出当前分镜
-                    if start_s > end:
-                        continue
-                    end_s = min(end_s, end)
-                    
-                    lines.append(str(srt_idx))
-                    lines.append(f"{_seconds_to_srt_time(start_s)} --> {_seconds_to_srt_time(end_s)}")
-                    lines.append(sub_text)
-                    lines.append("")
-                    srt_idx += 1
-                else:
-                    v_i += 1
-        else:
-            # Fallback 粗糙字幕
-            lines.append(str(srt_idx))
-            lines.append(f"{_seconds_to_srt_time(start)} --> {_seconds_to_srt_time(end)}")
-            lines.append(text)
-            lines.append("")
-            srt_idx += 1
-            
+        # 直接用剧本原台词【整句】显示——不用 whisper 逐词转写（它会一个字一个字蹦，
+        # 还会把"团团"听成"囤囤"、"动"听成"洞"）。整句 = 不蹦字、不错字、保证简体。
+        import re as _re
+        sub = text.strip()
+        # 去掉开头的 "角色名：" 前缀（如"林溪："），字幕只显示台词本身
+        sub = _re.sub(r'^[^：:，。!！?？\s]{1,8}[：:]\s*', '', sub)
+        if lang == "cn":
+            try:
+                import zhconv
+                sub = zhconv.convert(sub, "zh-cn")
+            except Exception:
+                pass
+        lines.append(str(srt_idx))
+        lines.append(f"{_seconds_to_srt_time(start)} --> {_seconds_to_srt_time(end)}")
+        lines.append(sub)
+        lines.append("")
+        srt_idx += 1
+
     return "\n".join(lines)
 
 
@@ -383,7 +358,7 @@ def _build_audio_track(
                 f"atrim=duration={total_duration},"    # 截到正好一条时长
                 f"afade=t=in:st=0:d=1,"                # 开头淡入
                 f"afade=t=out:st={fade_out_st}:d=1.5," # 结尾淡出
-                f"volume=0.22[bgm_heal]"               # 压低，不抢拟人对话
+                f"volume=0.12[bgm_heal]"               # 压低，绝不抢拟人对话（配音才是主角）
             )
             sfx_inputs.append("[bgm_heal]")
             input_idx += 1
@@ -434,7 +409,7 @@ def _build_audio_track(
             reverb_str = f",{reverb_filter}" if reverb_filter else ""
             filter_parts.append(
                 f"[{input_idx}]adelay={int(offset * 1000)}|{int(offset * 1000)},"
-                f"volume=1.5{reverb_str}[{label}]"
+                f"volume=2.8{reverb_str}[{label}]"
             )
             voice_inputs.append(f"[{label}]")
             input_idx += 1
@@ -642,13 +617,14 @@ def _mux_final_video(
         
         # 将真实截屏路径传入打字机引擎
         generate_typewriter_endcard(
-            branch_a, 
-            branch_b, 
-            tmp_endcard, 
-            fps=30, 
-            duration_sec=6.0, 
-            chars_per_sec=12.0, 
-            background_image_path=actual_bg_path 
+            branch_a,
+            branch_b,
+            tmp_endcard,
+            fps=30,
+            duration_sec=6.0,
+            chars_per_sec=12.0,
+            background_image_path=actual_bg_path,
+            healing=healing,
         )
         
         # 拼接
