@@ -465,7 +465,7 @@ def _seedance_generate_one(image_path: str, save_path: Path, prompt: str, model:
     # 治愈系：竖屏 9:16、5 秒、轻微运动；Seedance 用 --ratio/--duration 文本参数
     text = (prompt.strip() or "gentle subtle motion, cozy and calm") + " --ratio 9:16 --duration 5"
     payload = {
-        "model": JIMENG_MODEL,
+        "model": model,
         "content": [
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": img_data_uri}},
@@ -508,6 +508,33 @@ def _seedance_generate_one(image_path: str, save_path: Path, prompt: str, model:
         return content.get("video_url") or d.get("video_url")
 
     return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
+
+
+_SEEDANCE_EXHAUSTED: set = set()  # 免费额度耗尽 / ID无效的模型，跳过不再试
+
+def _seedance_generate(image_path: str, save_path: Path, prompt: str = "") -> Path:
+    """Seedance 模型链：依次薅各模型 200万免费额度，某个用尽/ID无效自动切下一个，pro-fast 最后兜底。"""
+    from config.settings import JIMENG_MODEL_CHAIN
+    chain = [m.strip() for m in JIMENG_MODEL_CHAIN.split(",") if m.strip()] or [JIMENG_MODEL]
+    last_err = None
+    for model in chain:
+        if model in _SEEDANCE_EXHAUSTED:
+            continue
+        try:
+            logger.info(f"[Seedance] 使用模型 {model}")
+            return _seedance_generate_one(image_path, save_path, prompt, model)
+        except Exception as e:
+            es = str(e).lower()
+            # 额度耗尽/无余额/模型ID无效 → 标记跳过，换下一个
+            if any(q in es for q in ["arrearage", "quota", "欠费", "balance", "insufficient",
+                                     "余额", "exhaust", "notfound", "not found", "invalidendpoint",
+                                     "invalid endpoint", "404"]):
+                logger.warning(f"[Seedance] {model} 不可用(额度尽/ID错) → 切下一个")
+                _SEEDANCE_EXHAUSTED.add(model)
+                last_err = e
+                continue
+            raise
+    raise last_err or VideoGenError("所有 Seedance 模型均不可用")
 
 
 _PROVIDER_PRIORITY = ["seedance", "aliyun", "kling", "siliconflow", "zhipu", "hailuo"]
