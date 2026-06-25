@@ -71,6 +71,12 @@ def main():
                         banner_text=script.episode_title, cover_teaser=script.cover_teaser)
     print(f"\n>>> 🎬 成品: {out}", flush=True)
 
+    # 渲染后自动自检(免肉眼审 bug)
+    from core.video_qa import qa_check_video, qa_check_voices, format_qa_report
+    final = list(out.values())[0] if isinstance(out, dict) and out else out
+    issues = qa_check_video(final) + qa_check_voices(audio_manifest, scenes)
+    print("\n" + format_qa_report(issues), flush=True)
+
 
 if __name__ == "__main__":
     main()
