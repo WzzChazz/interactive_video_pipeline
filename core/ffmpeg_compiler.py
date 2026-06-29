@@ -805,8 +805,9 @@ def compile_video(
                     dur = min(dur, float(CLIP_DURATION_SECONDS))
                     dur = max(dur, 2.0)
                     
-                    # Wav2Lip trims the video to the audio length, so we must not ask FFmpeg to concat beyond the EOF
-                    if USE_LIPSYNC and scene.get("dialogue"):
+                    # Wav2Lip trims the video to the audio length, so we must not ask FFmpeg to concat beyond the EOF.
+                    # 治愈线不过 Wav2Lip（767行已门控跳过），这里若仍按"已裁剪"逻辑去截会错误截短片段 → 必须同样排除治愈线。
+                    if USE_LIPSYNC and not _is_healing_theme(theme_key) and scene.get("dialogue"):
                         actual_vid_dur = _get_audio_duration(path)
                         # We use the actual duration minus a tiny safety margin to prevent concat demuxer EOF errors
                         dur = min(dur, actual_vid_dur - 0.03)

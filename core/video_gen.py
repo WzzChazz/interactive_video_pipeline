@@ -611,6 +611,59 @@ def make_ken_burns_clip(image_path: str, save_path: Path, duration: float = 5.0,
     return save_path
 
 
+def make_punch_cut_clip(image_path: str, save_path: Path, duration: float = 5.0, seed: int = 0) -> Path:
+    """开场快切（治愈系第1镜专用）：同一张爆点图按递进景别【硬切】成多段(每段<1s)，头部制造
+    pattern interrupt 压低 2 秒跳出率；最后定格在最紧景别软着陆补满 duration，保持治愈感不破。
+    纯 FFmpeg、零成本。compiler 用 outpoint 从头部裁剪 → 即使裁到 ~2.5s 也保留头部快切。"""
+    import subprocess, tempfile
+    from config.settings import VIDEO_WIDTH, VIDEO_HEIGHT
+    fps = 30
+    # (zoom 推近倍数, focus_y 纵向取景偏上对脸, seg_dur 段时长)
+    # 前 3 段快切(<1s)抓拇指：全景→推一档→怼脸；末段长定格软着陆。
+    segments = [
+        (1.00, 0.50, 0.60),
+        (1.18, 0.40, 0.60),
+        (1.42, 0.36, 0.70),
+    ]
+    fast = sum(s[2] for s in segments)
+    segments.append((1.42, 0.36, max(0.5, duration - fast)))  # 软着陆定格
+
+    tmp_dir = Path(tempfile.gettempdir())
+    parts: list[Path] = []
+    try:
+        for i, (z, fy, seg_dur) in enumerate(segments):
+            part = tmp_dir / f"punch_{Path(image_path).stem}_{seed}_{i}.mp4"
+            vf = (
+                f"crop=iw/{z:.4f}:ih/{z:.4f}:(iw-iw/{z:.4f})/2:(ih-ih/{z:.4f})*{fy:.3f},"
+                f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=increase,"
+                f"crop={VIDEO_WIDTH}:{VIDEO_HEIGHT},setsar=1,fps={fps}"
+            )
+            subprocess.run([
+                "ffmpeg", "-y", "-loop", "1", "-i", str(image_path),
+                "-vf", vf, "-t", f"{seg_dur:.3f}", "-r", str(fps),
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", str(part),
+            ], check=True, capture_output=True)
+            parts.append(part)
+
+        concat_list = tmp_dir / f"punch_concat_{Path(image_path).stem}_{seed}.txt"
+        with open(concat_list, "w") as f:
+            for p in parts:
+                f.write(f"file '{p}'\n")
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", str(fps), str(save_path),
+        ], check=True, capture_output=True)
+    finally:
+        for p in parts:
+            try: p.unlink()
+            except Exception: pass
+        try: concat_list.unlink()
+        except Exception: pass
+
+    logger.info(f"[PunchCut] 开场快切片段生成: {save_path.name}（{len(segments)}段硬切）")
+    return save_path
+
+
 def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], episode_tag: str, episode_id: Optional[int] = None, theme_key: str = "hospital_horror") -> dict[int, str]:
     """并发将分镜静图转视频。治愈题材：静镜走免费Ken Burns，仅 needs_motion 的动作镜走图生视频。"""
     from config.themes import THEMES
@@ -641,13 +694,18 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
         
         # 按题材组装图生视频提示词（治愈 vs 恐怖）
         if healing:
-            act = pose if pose else "sitting calmly with very subtle gentle motion"
+            # 借鉴 Seedance「时间戳分镜法」：把 5s 拆成两拍，给模型明确的运动时序，
+            # 而非一段静态描述让它自己猜。第二拍专放团团慢半拍的呆萌反应＝放大反差萌卖点。
+            act = pose if pose else "settling in cozily with a soft natural micro-movement"
+            cam = base_camera or "slow gentle push-in"
             camera_note = (
-                f"[Subject] A beautiful elegant woman and a cute chubby capybara. {act}.\\n"
-                f"[Environment] cozy warm home, soft natural daylight, pastel cream tones, plants.\\n"
-                f"[Action] {act}. Only subtle gentle motion, calm and slow.\\n"
-                f"[Camera] {camera_type}. {base_camera or 'Slow gentle push-in'}, steady, no shake.\\n"
-                f"[Atmosphere] cozy healing slice-of-life, warm soft lighting, wholesome and calm."
+                f"[Subject] An elegant calm young woman (Lin Xi) and a round chubby derpy capybara (Tuan Tuan), soft anime illustration style.\n"
+                f"[Environment] cozy warm home, soft natural daylight, pastel cream tones, plants.\n"
+                f"[0-2s] {act}. Only the lightest natural motion — a blink, a breath, hair/clothes swaying gently.\n"
+                f"[2-5s] the motion continues softly; Tuan Tuan reacts a beat late with a deadpan derpy little move (slow blink / tiny head tilt).\n"
+                f"[Camera] {camera_type}. {cam}, steady and slow, absolutely no shake, no fast motion.\n"
+                f"[Atmosphere] cozy healing slice-of-life, warm soft lighting, wholesome, calm and slow.\n"
+                f"[Negative] NO text, NO subtitles, NO captions, NO logo, NO watermark; no horror, no darkness, no fast cuts."
             )
         else:
             # 采用 GitHub 开源项目推荐的结构化 Prompt 逻辑，动态组装恐怖悬疑镜头
@@ -679,7 +737,11 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
                     return idx, str(save_path)
 
         try:
-            if healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
+            if healing and idx == 1:
+                # 第1镜=开场钩子：走免费快切，头部硬切压2秒跳出率（覆盖 needs_motion 的图生视频路由，更省更对路）
+                logger.info(f"Scene {idx}: 开场快切 PunchCut（免费，压2秒跳出率）")
+                make_punch_cut_clip(img_path, save_path, duration=5.0, seed=idx)
+            elif healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
                 _why = "验证期全Ken Burns" if KEN_BURNS_ONLY else "静镜"
                 logger.info(f"Scene {idx}: {_why} → Ken Burns 缓慢推拉（免费）")
                 make_ken_burns_clip(img_path, save_path, duration=5.0, seed=idx)
