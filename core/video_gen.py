@@ -737,11 +737,8 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
                     return idx, str(save_path)
 
         try:
-            if healing and idx == 1:
-                # 第1镜=开场钩子：走免费快切，头部硬切压2秒跳出率（覆盖 needs_motion 的图生视频路由，更省更对路）
-                logger.info(f"Scene {idx}: 开场快切 PunchCut（免费，压2秒跳出率）")
-                make_punch_cut_clip(img_path, save_path, duration=5.0, seed=idx)
-            elif healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
+            # 快切开场已撤(make_punch_cut_clip 保留但不再路由)：拆解8条爆款证明赢家是"萌脸定格+微动",非快切。
+            if healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
                 _why = "验证期全Ken Burns" if KEN_BURNS_ONLY else "静镜"
                 logger.info(f"Scene {idx}: {_why} → Ken Burns 缓慢推拉（免费）")
                 make_ken_burns_clip(img_path, save_path, duration=5.0, seed=idx)
