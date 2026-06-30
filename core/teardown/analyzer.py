@@ -109,6 +109,60 @@ _VISION_PROMPT = """你是一个短视频「开场钩子」拆解专家。看这
 }"""
 
 
+_CAPTION_PROMPT = """这是短视频的一帧。只提取画面上的【字幕/文案文字】（讲故事、台词、心声、点题那种），原样输出，不要任何解释。
+严格排除：水印、抖音号、账号名、平台logo、"抖音"字样、作者署名（如"字幕by xxx"）、歌词字幕另算也输出。
+如果这一帧没有任何字幕文案，只输出一个减号：-"""
+
+
+def _ocr_caption(frame_path: Path) -> str:
+    """单帧字幕 OCR（排除水印/抖音号）。复用 qwen-vl-max；无 key/失败返回空。"""
+    try:
+        from config.settings import DASHSCOPE_API_KEY
+        if not DASHSCOPE_API_KEY:
+            return ""
+        import dashscope
+        dashscope.api_key = DASHSCOPE_API_KEY
+        resp = dashscope.MultiModalConversation.call(
+            model="qwen-vl-max",
+            messages=[{"role": "user", "content": [
+                {"image": f"file://{frame_path.absolute()}"},
+                {"text": _CAPTION_PROMPT},
+            ]}],
+        )
+        if resp.status_code != 200:
+            return ""
+        t = resp.output.choices[0].message.content[0]["text"].strip()
+        return "" if t in ("-", "—", "无", "（无）", "") else t
+    except Exception as e:
+        logger.warning(f"[Teardown] 字幕OCR失败: {e}")
+        return ""
+
+
+def _caption_track(path: str, duration: Optional[float], work_dir: Path,
+                   interval: float = 2.5, max_frames: int = 12) -> list[dict]:
+    """全片字幕轨：每隔 interval 抽帧 OCR，去掉连续重复，得到字幕文案时间轴。"""
+    if not duration or duration <= 0:
+        return []
+    n = min(max_frames, max(1, int(duration // interval)))
+    step = duration / (n + 1)
+    track: list[dict] = []
+    last: Optional[str] = None
+    for i in range(1, n + 1):
+        t = round(step * i, 2)
+        fp = _extract_frame(path, t, work_dir / f"{Path(path).stem}_cap_{i}.jpg")
+        if not fp:
+            continue
+        cap = _ocr_caption(fp)
+        try:
+            fp.unlink()
+        except Exception:
+            pass
+        if cap and cap != last:
+            track.append({"t": t, "text": cap})
+            last = cap
+    return track
+
+
 def _vision_hook(frame_path: Path) -> Optional[dict]:
     """首帧钩子分析。复用 image_gen 同款 DashScope qwen-vl-max；无 key/失败返回 None。"""
     try:
@@ -171,6 +225,7 @@ def analyze_video(
     path: str,
     do_vision: bool = True,
     do_transcript: bool = True,
+    do_captions: bool = True,
     work_dir: Optional[Path] = None,
 ) -> dict:
     """拆解单条视频 → DNA dict。"""
@@ -192,6 +247,7 @@ def analyze_video(
         **meta,
         "rhythm": rhythm,
         "hook": None,
+        "caption_track": None,
         "voice": None,
     }
 
@@ -199,6 +255,9 @@ def analyze_video(
         frame = _extract_frame(str(p), 0.5, work_dir / f"{p.stem}_hook.jpg")
         if frame:
             dna["hook"] = _vision_hook(frame)
+
+    if do_captions:
+        dna["caption_track"] = _caption_track(str(p), meta.get("duration_sec"), work_dir)
 
     if do_transcript:
         dna["voice"] = _transcribe(str(p))

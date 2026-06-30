@@ -51,8 +51,13 @@ def render_report(dna_list: list[dict]) -> str:
         lines.append(f"- **开场**：{_g(d, 'hook', 'opens_on')}　抓拇指分 {_g(d, 'hook', 'thumb_stopper_score')}/5")
         lines.append(f"- **屏幕字幕**：{_g(d, 'hook', 'on_screen_text')}")
         lines.append(f"- **节奏**：{_g(d, 'rhythm', 'shot_count')} 镜 / 均 {_g(d, 'rhythm', 'avg_shot_sec')}s，首镜 {_g(d, 'rhythm', 'first_shot_sec')}s，前2秒切 {_g(d, 'rhythm', 'cuts_in_first_2s')} 刀")
-        lines.append(f"- **首句台词**：{_g(d, 'voice', 'first_line')}")
-        lines.append(f"- **配音全文**：{_g(d, 'voice', 'transcript')}")
+        track = d.get("caption_track")
+        if track:
+            cap_str = " ｜ ".join(f"{c.get('t')}s: {c.get('text')}" for c in track)
+            lines.append(f"- **字幕文案轨**：{cap_str}")
+        else:
+            lines.append(f"- **字幕文案轨**：（无）")
+        lines.append(f"- **配音/BGM全文**：{_g(d, 'voice', 'transcript')}")
         lines.append("")
 
     return "\n".join(lines)
