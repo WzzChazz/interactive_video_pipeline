@@ -160,11 +160,12 @@ def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Pa
             # 2. 暖色 tint：R 通道略提、B 通道略压
             f"curves=red='0/0.03 1/1.0':blue='0/0 1/0.92',"
             # 3. 主标题（白字 + 柔粉描边，圆润可爱）
+            #    字号 92：10 个中文字 ≈920px<1080 宽，不再左右溢出；y 居中偏下=手机安全区(避开顶部UI/网格裁切)
             f"drawtext=fontfile='{font_path}':text='{main_title}':"
-            f"x=(w-text_w)/2:y=h/2-250:fontsize=120:fontcolor=white:bordercolor=0xB18FFF:borderw=6,"
+            f"x=(w-text_w)/2:y=h/2-80:fontsize=92:fontcolor=white:bordercolor=0xB18FFF:borderw=6,"
             # 4. 副标题引导文案（暖白字 + 浅棕柔影）
             f"drawtext=fontfile='{font_path}':text='{sub_title}':"
-            f"x=(w-text_w)/2:y=h/2-90:fontsize=66:fontcolor=0xFFF6E5:shadowcolor=0x7A5230:shadowx=3:shadowy=3"
+            f"x=(w-text_w)/2:y=h/2+55:fontsize=52:fontcolor=0xFFF6E5:shadowcolor=0x7A5230:shadowx=3:shadowy=3"
         )
     else:
         cover_filter = (
@@ -174,12 +175,12 @@ def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Pa
             f"curves=red='0/0 1/0.7':blue='0/0.1 1/1.0',"
             # 3. 强力四角暗角，营造窥视感
             f"vignette=PI/2.5,"
-            # 4. 主标题（白字 + 血红阴影）
+            # 4. 主标题（白字 + 血红阴影）—— 字号收到 100、y 居中偏下,避免横向溢出+手机裁切
             f"drawtext=fontfile='{font_path}':text='{main_title}':"
-            f"x=(w-text_w)/2:y=h/2-250:fontsize=130:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
+            f"x=(w-text_w)/2:y=h/2-80:fontsize=100:fontcolor=white:shadowcolor=red:shadowx=6:shadowy=6,"
             # 5. 副标题引导文案（明黄色）
             f"drawtext=fontfile='{font_path}':text='{sub_title}':"
-            f"x=(w-text_w)/2:y=h/2-80:fontsize=70:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
+            f"x=(w-text_w)/2:y=h/2+55:fontsize=56:fontcolor=yellow:shadowcolor=black:shadowx=4:shadowy=4"
         )
     
     _run_ffmpeg([
