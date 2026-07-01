@@ -195,7 +195,48 @@ def _build_healing_system_prompt(theme: dict) -> str:
       - emotion    = 旁白语气（warm/gentle/playful），驱动 TTS 音色，NOT 对口型
       - next_branches = 温柔的"明日预告"（不做投票/不做选项引导）
       - is_serial=False：每条自包含，无集数、无前情依赖
+
+    内容基调由 settings.HEALING_STYLE 开关（A/B 用）：
+      - cozy  = 静治愈萌 + BGM 主导（抖音水豚噜噜路子）
+      - sassy = 搞笑嘴替 + 有事发生 + 戏剧反转（对齐快手偏好 + 自己数据"有动作>发呆"）
     """
+    from config.settings import HEALING_STYLE
+
+    if HEALING_STYLE == "cozy":
+        register_hook = textwrap.dedent("""\
+1. **FRAME-1 = MAXIMALLY-CUTE 共鸣情境 (PROVEN hook: winners open on a held adorable capybara, NOT fast cuts, NOT a text line)**:
+   ~43% swipe in <2s. What stops the thumb is 团团 at its absolute CUTEST inside an instantly-relatable everyday 共鸣
+   situation (赖床/上班摆烂/馋零食/下雨发呆/打工人下班瘫), framed TIGHT with 团团 large, round, adorable. Cuteness + "这不就是我" = they stay.
+   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans, build-up. Open ON the cute situation.
+   - Carry Scene 1 by CUTE VISUAL + BGM. `dialogue` may be "" — the adorable frame IS the hook.
+   - Scene 1 holds the frame with only SUBTLE life (slow blink, soft breath). NOT rapid cuts, NOT a hard push.""")
+        register_engine = textwrap.dedent("""\
+3. **BGM + 萌 IS THE ENGINE — dialogue is garnish**: cute visual + fitting BGM carry everything. You add ONE
+   differentiator the big IPs skip: a SINGLE 欠/皮/凡尔赛/网感 团团 line (first person, speaker="团团", 老爷爷音反差,
+   摆烂/打工人/社恐 共鸣), landed ONCE as the closing button. e.g. 团团:"按时摆烂，养生第一步。"
+4. **TONE — 沙雕治愈 (silly-cute), warm with a light bite. No meanness, no 擦边. One snort-laugh, then 'awww'.**""")
+        register_dialogue = textwrap.dedent("""\
+- `dialogue`: SPARSE — MOST scenes dialogue="" (carried by cute visual + BGM). The WHOLE skit has only ONE 皮 团团
+  line total (≤18 chars) as the closing button. Do NOT write a line every scene.""")
+        register_arc = "Cute situation → (gentle beat) → ONE 皮 button line. Do NOT pad; hits are 6.5-13s / 1-4 shots."
+    else:  # sassy (C) — 默认
+        register_hook = textwrap.dedent("""\
+1. **FRAME-1 = 团团 MID-SOMETHING, expressive (快手 rewards 搞笑/抽象/戏剧, NOT quiet 发呆 — your own data: 有动作 9.1% > 发呆 1-3%)**:
+   Open ON 团团 caught mid-action / mid-reaction inside a relatable 打工人 situation, with an EXPRESSIVE or 沙雕 face
+   (瞪眼/嫌弃/得意/摊手/装死) — something is HAPPENING or about to. Still cute + "这不就是我", but with ENERGY, not stillness.
+   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans, a calm 发呆/睡觉 vibe. Open ON the funny/dramatic beat.
+   - Scene 1 `dialogue` = the HOOK 嘴替 line (团团 first person, punchy). The IP is 「团团不想上班·嘴替水豚」 — lean HARD into it.""")
+        register_engine = textwrap.dedent("""\
+3. **嘴替吐槽 IS THE ENGINE (皮/损/网感), + 有事发生 (something happens)**: 团团 narrates its lazy/sassy 打工人/社恐/摆烂
+   inner 吐槽 in first person (speaker="团团", 老爷爷音反差) — 欠/皮/凡尔赛/阴阳怪气 一针见血 网感金句, NOT gentle wisdom.
+   MOST scenes carry a punchy line. And make something ACTUALLY HAPPEN with a mini 反转/戏剧 beat (团团 tries→fails→摊手,
+   拒绝上班→装死, 抢到零食→得意). 沙雕/夸张/抽象 welcome (对齐快手 #抽象). 林溪可当被它吐槽的沉默捧哏。
+4. **TONE — 沙雕搞笑 first, 治愈 second: punchy, funny, a bit 抽象. MUST land a 反转/笑点. Wholesome, no 擦边, no real meanness.**""")
+        register_dialogue = textwrap.dedent("""\
+- `dialogue`: 嘴替吐槽是主菜 — MOST scenes have ONE punchy 团团 line (≤18 chars, 皮/网感), building to a 反转 punchline.
+  e.g. 团团:"上班?我连床都不想下。" 团团:"钱是老板的，命是我自己的。" 别写成温柔碎碎念，要一针见血、好笑。""")
+        register_arc = "有事发生 → 一个反转/戏剧beat → 吐槽punchline收尾. 别拖，2-3镜10-14s，节奏快、有笑点。"
+
     return textwrap.dedent(f"""
 You are an elite Chinese short-video creative director specializing in COZY HEALING (治愈系)
 slice-of-life micro-skits for Douyin/Kuaishou in 2026. You write self-contained **10-14 second**
@@ -224,36 +265,16 @@ big IPs are too lazy to do — used ONCE, never a monologue. KEEP IT SHORT, CUTE
 - {theme['negative_prompt']}
 
 ## HEALING FORMAT GUIDELINES (MANDATORY)
-1. **FRAME-1 = MAXIMALLY-CUTE 共鸣情境 (the PROVEN hook — teardown: winners open on a held adorable capybara, NOT fast cuts, NOT a text line)**:
-   ~43% of viewers swipe in <2s. The data shows what stops the thumb is NOT a joke or a caption — it's 团团 at its
-   absolute CUTEST inside an instantly-relatable everyday 共鸣 situation (赖床/上班摆烂/馋零食/下雨发呆/打工人下班瘫),
-   framed TIGHT with 团团 large, round and adorable. Cuteness + "这不就是我" = they stay.
-   - ❌ FORBIDDEN as Scene 1: wide/empty establishing shots, slow scenery pans, build-up. Open ON the cute situation.
-   - Carry Scene 1 by the CUTE VISUAL + BGM. `dialogue` may be "" — do NOT force a text hook line; the adorable frame IS the hook.
-   - Scene 1 holds the adorable frame with only SUBTLE life (a slow blink, a soft breath, ears twitch). NOT rapid cuts, NOT a hard push.
-   - The cover is cut from here, so this frame IS your cover — make it maximally cute and relatable.
+{register_hook}
+   - The cover is cut from an early frame, so Scene 1 IS your cover — make it stop the thumb.
 2. **VOICED 拟人 DIALOGUE — BUT NO REALISTIC LIP-SYNC (CRITICAL)**: 团团 and 林溪 DO "talk", as a
    funny anthropomorphic voice-over banter (exactly like 宠物拟人配音 videos). The VOICE + 字幕 carry
    the dialogue — we do NOT realistically sync their mouths. Therefore:
    - `speaker` is ONE of: "团团" (deadpan capybara), "林溪" (cool woman), or "旁白" (narrator).
    - In `visual_prompt.pose`, do NOT depict precise talking / mouth-syncing; show gentle reactions
      (a slow blink, a head tilt, sipping coffee). Quick cuts + voice + 字幕 carry the conversation.
-3. **反差萌 (CUTE CONTRAST) IS THE COMEDY ENGINE — 团团 IS A DEADPAN TROLL (皮/损)**: The capybara's
-   cute derpy face hides a lazy, sassy, scheming little troll. 团团's lines should be 欠/皮/凡尔赛/阴阳怪气
-   (gently savage, smug, shamelessly lazy) — internet-savvy (网感) one-liners, NOT gentle wisdom.
-   林溪 plays the straight-man who gets roasted or gives a savage comeback. Light mutual roasting banter.
-   Each skit MUST land at least one punchy/unexpected 反转 punchline (then a warm 'awww' beat to close).
-   **YOUR WEDGE — exactly ONE 皮 团团 line (NOT a monologue, NOT a line every scene)**: the teardown shows the
-   hits use NO narration at all — cute visual + BGM carries everything. But you're a new account, so you add ONE
-   differentiator the big IPs skip: a SINGLE 欠/皮/凡尔赛/网感 团团 line in first person (speaker="团团", 老爷爷音反差),
-   landed ONCE as the closing button/punchline (摆烂/打工人/社恐 共鸣). e.g. 团团:"按时摆烂，养生第一步。"
-   Everything else = cute visual + BGM, dialogue="". The line is the garnish, NOT the meal.
-4. **TONE — 沙雕治愈 (silly-cute), NOT soft-gentle**: cozy AND cheeky (皮). Warm vibe, but the jokes
-   have bite. Aim to make the viewer snort-laugh at least once, THEN go 'awww'. Keep it wholesome
-   (no meanness that actually hurts, no 擦边) — savage but loving, like roasting your lazy best friend.
-- `dialogue`: keep it SPARSE — MOST scenes MUST be dialogue="" (carried by cute visual + BGM, like the real hits).
-  The WHOLE skit has only ONE 皮 团团 line total (≤18 chars), placed as the closing button. Do NOT write a line
-  in every scene. Example of the single wedge line: 团团:"按时摆烂，养生第一步。" — everything else stays silent + cute.
+{register_engine}
+{register_dialogue}
 - `emotion`: delivery tone driving TTS color — "deadpan"/"playful" (团团), "gentle"/"cool" (林溪),
   "warm"/"soft" (旁白).
 - Visual prompts: {theme['visual_style']}
@@ -281,8 +302,7 @@ big IPs are too lazy to do — used ONCE, never a monologue. KEEP IT SHORT, CUTE
   characters visibly move/gesture while talking (feels alive). Set FALSE only for a pure scenic
   breather shot with NO dialogue. Most dialogue scenes → TRUE.
 - sfx_prompt (English): {theme['sfx_style']}
-- Total scenes: 2-3 (target ~10-14 seconds). Cute situation → (gentle beat) → ONE 皮 button line. That's it.
-  Do NOT pad — the biggest real hits are 6.5-13s with 1-4 shots. Shorter + cuter beats longer + cleverer every time.
+- Total scenes: 2-3 (target ~10-14 seconds). {register_arc}
 - EVERY scene MUST advance a joke beat or an emotional beat. NO filler / NO dead shots — if a scene
   doesn't add a laugh or a warm beat, cut it. Tight pacing, but let the comedic timing breathe.
 - HOOK FRONT-LOAD: the funniest/cutest beat goes in scene 1-2, NOT saved for the end — viewers who
@@ -580,14 +600,23 @@ def _build_user_prompt(
     # 治愈/非连载题材：自包含单条小剧场（无历史/无投票/无集数依赖）
     _t = THEMES.get(theme_key, {})
     if not _t.get("is_serial", True):
+        from config.settings import HEALING_STYLE
         topics = "周一赖床 / 下雨天 / 嚷着要减肥 / 加班回家 / 抢零食 / 第一次见到雪 / 夏天太热 / 想点外卖"
+        if HEALING_STYLE == "cozy":
+            style_lines = textwrap.dedent(f"""\
+            - 首帧=团团最萌的一个「日常共鸣情境」（如：{topics}），怼脸定格、让人"这不就是我"。靠萌+音乐(BGM)扛全片。
+            - 主引擎=可爱画面 + BGM，大部分镜 dialogue 留空；全片只放【一句】团团皮台词（老爷爷音反差，摆烂/打工人嘴替），
+              放在结尾当点睛楔子——差异化不是主菜，别每句都说。
+            - 不要快切、不要复杂剧情、不要长旁白；温柔治愈收尾。""")
+        else:  # sassy
+            style_lines = textwrap.dedent(f"""\
+            - 首帧=团团在某个「打工人共鸣情境」（如：{topics}）里【正在干事/正在反应】，表情要有戏（瞪眼/嫌弃/得意/摊手/装死），有事在发生、别发呆。
+            - 主引擎=团团第一人称【嘴替吐槽】（老爷爷音反差，皮/损/网感一针见血），大部分镜都有一句，人设=「团团不想上班·嘴替水豚」，往死里皮。
+            - 要【有事发生+一个反转/戏剧beat】（想上班却装死、抢到零食得意、试了又摆烂），沙雕夸张/抽象都行（对齐快手）；结尾一句吐槽收尾，必须好笑。""")
         return textwrap.dedent(f"""
         请为短剧《{_t.get('name', '治愈日常')}》创作【一条全新的、自包含的】单条小剧场。
         - 时长 10-14 秒，2-3 个分镜。极短＝完播优先，绝不凑时长（真爆款 6.5-13 秒）。
-        - 首帧=团团最萌的一个「日常共鸣情境」（如：{topics}），怼脸定格、让人"这不就是我"。靠萌+音乐(BGM)扛全片。
-        - 主引擎=可爱画面 + BGM，大部分镜 dialogue 留空；全片只放【一句】团团皮台词（老爷爷音反差，摆烂/打工人嘴替），
-          放在结尾当点睛楔子——这是你新号区别于大号的差异化，不是主菜，别每句都说。
-        - 不要快切、不要复杂剧情、不要长旁白；温柔治愈收尾。
+        {style_lines}
         - 不要投票、不要集数标记、不要恐怖元素；next_branches 用温柔的"明日预告"。
         - 严格只输出纯 JSON，不含任何额外文字。
         """).strip()

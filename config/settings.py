@@ -84,6 +84,9 @@ class AppSettings(BaseSettings):
     IP_REFERENCE_IMAGE: str = ""  # 固定IP定妆照路径(林溪+团团)；设了且有即梦key→每张图走Seedream参考图锁脸
     KEN_BURNS_ONLY: bool = True  # 验证期=True：治愈所有镜头都走免费Ken Burns(不花图生视频钱)；想开动作镜改False
     VIDEO_PROVIDER: str = "seedance"  # seedance(即梦) | zhipu | kling | hailuo | aliyun
+    # 治愈线内容基调开关（A/B 用）：cozy=静治愈萌+BGM主导(抖音水豚噜噜路子/B方案)；
+    # sassy=搞笑嘴替+有事发生+戏剧反转(对齐快手抽象/搞笑/剧情偏好 + 自己数据"有动作>发呆"/C方案)
+    HEALING_STYLE: str = "sassy"
 
     # 5. 音频合成
     USE_ELEVENLABS_SFX: bool = False
@@ -144,6 +147,7 @@ JIMENG_IMAGE_MODEL = _cfg.JIMENG_IMAGE_MODEL
 IP_REFERENCE_IMAGE = _cfg.IP_REFERENCE_IMAGE
 KEN_BURNS_ONLY = _cfg.KEN_BURNS_ONLY
 VIDEO_PROVIDER = _cfg.VIDEO_PROVIDER
+HEALING_STYLE = _cfg.HEALING_STYLE
 USE_ELEVENLABS_SFX = _cfg.USE_ELEVENLABS_SFX
 ELEVENLABS_API_KEY = _cfg.ELEVENLABS_API_KEY
 ELEVENLABS_VOICE_ID = _cfg.ELEVENLABS_VOICE_ID
