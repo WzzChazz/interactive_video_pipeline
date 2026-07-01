@@ -204,21 +204,24 @@ def _build_healing_system_prompt(theme: dict) -> str:
 
     if HEALING_STYLE == "cozy":
         register_hook = textwrap.dedent("""\
-1. **FRAME-1 = MAXIMALLY-CUTE 共鸣情境 (PROVEN hook: winners open on a held adorable capybara, NOT fast cuts, NOT a text line)**:
-   ~43% swipe in <2s. What stops the thumb is 团团 at its absolute CUTEST inside an instantly-relatable everyday 共鸣
-   situation (赖床/上班摆烂/馋零食/下雨发呆/打工人下班瘫), framed TIGHT with 团团 large, round, adorable. Cuteness + "这不就是我" = they stay.
-   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans, build-up. Open ON the cute situation.
-   - Carry Scene 1 by CUTE VISUAL + BGM. `dialogue` may be "" — the adorable frame IS the hook.
-   - Scene 1 holds the frame with only SUBTLE life (slow blink, soft breath). NOT rapid cuts, NOT a hard push.""")
+1. **FRAME-1 = 高浓度萌尖峰 + 温暖共鸣情境 (PROVEN: 8条爆款拆解都开在一张定住的萌脸,NOT 快切)**:
+   ~43% swipe in <2s. Stop the thumb with 团团 at its ABSOLUTE CUTEST — 尖叫级 adorable, not background-calm — inside a
+   warm relatable moment (下班瘫软/被窝里探头/捧着热饮/看窗外的雨/晒太阳眯眼), framed TIGHT, 团团 large round fluffy.
+   Aim for viewers to feel "啊啊啊太可爱了" (extreme cuteness itself drives 转发/收藏). Cuteness + "这一刻好治愈" = they stay.
+   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans. Open ON the adorable moment.
+   - Hold the frame with SUBTLE life (slow blink, soft breath, tiny stretch). NOT rapid cuts, NOT a hard push.""")
         register_engine = textwrap.dedent("""\
-3. **BGM + 萌 IS THE ENGINE — dialogue is garnish**: cute visual + fitting BGM carry everything. You add ONE
-   differentiator the big IPs skip: a SINGLE 欠/皮/凡尔赛/网感 团团 line (first person, speaker="团团", 老爷爷音反差,
-   摆烂/打工人/社恐 共鸣), landed ONCE as the closing button. e.g. 团团:"按时摆烂，养生第一步。"
-4. **TONE — 沙雕治愈 (silly-cute), warm with a light bite. No meanness, no 擦边. One snort-laugh, then 'awww'.**""")
+3. **ONE 治愈金句 IS THE ENGINE (转发/收藏 driver on 中文平台) + BGM + 萌**: the whole skit builds to ONE warm,
+   screenshot-worthy 治愈 line — 团团 说出观众心声,但【落点必须正向】: 被理解 / 被允许休息 / 被温柔鼓励。
+   e.g. 团团:"今天也辛苦了,回家可以什么都不做。" / "慢一点没关系,又不是只有你一个人在赶路。" / "别硬撑了,你已经很好了。"
+   这句金句就是别人【转发去安慰累的朋友 / 收藏起来emo时看】的理由——它是核,不是点缀。
+   - ⛔ 正向红线(合规,必须守): NO 丧/摆烂/躺平/负能量/emo/放弃。心声可以"累",但落点一定是暖和被允许,绝不是"摆烂/别努力了"。
+4. **TONE — 温柔治愈,暖到想收藏、想转给某人。正能量、wholesome。NOT 皮/损/丧/阴阳怪气。**""")
         register_dialogue = textwrap.dedent("""\
-- `dialogue`: SPARSE — MOST scenes dialogue="" (carried by cute visual + BGM). The WHOLE skit has only ONE 皮 团团
-  line total (≤18 chars) as the closing button. Do NOT write a line every scene.""")
-        register_arc = "Cute situation → (gentle beat) → ONE 皮 button line. Do NOT pad; hits are 6.5-13s / 1-4 shots."
+- `dialogue`: MOST scenes dialogue="" (cute visual + BGM carry). The WHOLE skit lands ONE warm 治愈金句 (≤20 chars,
+  speaker 团团 或 旁白) as the emotional button —— MUST 正向(被理解/允许休息/被鼓励), NEVER 丧/摆烂. 它会作为大字字幕显示,可截图。""")
+        register_arc = ("温暖萌情境 → 一句可截图的【正向】治愈金句 → 结尾金句大字定帧。极短10-13s。"
+                        "episode_summary(文案)结尾带暖CTA『发给最近很累的人』引导转发,但不硬导私域。")
     else:  # sassy (C) — 默认
         register_hook = textwrap.dedent("""\
 1. **FRAME-1 = 团团 MID-SOMETHING, expressive (快手 rewards 搞笑/抽象/戏剧, NOT quiet 发呆 — your own data: 有动作 9.1% > 发呆 1-3%)**:
@@ -604,10 +607,12 @@ def _build_user_prompt(
         topics = "周一赖床 / 下雨天 / 嚷着要减肥 / 加班回家 / 抢零食 / 第一次见到雪 / 夏天太热 / 想点外卖"
         if HEALING_STYLE == "cozy":
             style_lines = textwrap.dedent(f"""\
-            - 首帧=团团最萌的一个「日常共鸣情境」（如：{topics}），怼脸定格、让人"这不就是我"。靠萌+音乐(BGM)扛全片。
-            - 主引擎=可爱画面 + BGM，大部分镜 dialogue 留空；全片只放【一句】团团皮台词（老爷爷音反差，摆烂/打工人嘴替），
-              放在结尾当点睛楔子——差异化不是主菜，别每句都说。
-            - 不要快切、不要复杂剧情、不要长旁白；温柔治愈收尾。""")
+            - 首帧=团团【尖叫级可爱】的一个温暖共鸣情境（如：{topics}），怼脸定格、让人"啊啊太可爱了/好治愈"。靠萌+音乐(BGM)扛全片。
+            - 全片攒一句【可截图的正向治愈金句】当核（团团或旁白说出观众心声，落点必须正向：被理解/被允许休息/被鼓励），
+              作为大字字幕定帧收尾。例:"今天也辛苦了,回家可以什么都不做。""慢一点没关系,又不是只有你在赶路。"
+              ⛔正向红线:绝不能丧/摆烂/躺平/emo/负能量——这句金句是别人【转发去安慰朋友/收藏起来看】的理由。
+            - 大部分镜 dialogue 留空,靠萌画面+BGM;不要快切、不要复杂剧情。
+            - episode_summary(文案)结尾带暖CTA『发给最近很累的人』引导转发,但【别硬导私域/别留微信】。""")
         else:  # sassy
             style_lines = textwrap.dedent(f"""\
             - 首帧=团团在某个「打工人共鸣情境」（如：{topics}）里【正在干事/正在反应】，表情要有戏（瞪眼/嫌弃/得意/摊手/装死），有事在发生、别发呆。
