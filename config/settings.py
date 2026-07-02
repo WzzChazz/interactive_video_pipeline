@@ -75,11 +75,15 @@ class AppSettings(BaseSettings):
     ZHIPU_API_KEY: str = ""
     JIMENG_API_KEY: str = ""  # 火山引擎 Ark Key（即梦 Seedance 图生视频）
     JIMENG_API_URL: str = "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks"
-    JIMENG_MODEL: str = "doubao-seedance-1-0-pro-250528"  # Seedance 主模型(已验证可用)
-    # 模型链：依次薅各模型 200万免费额度,用尽/ID错自动跳下一个,pro-fast 最便宜放最后兜底
-    JIMENG_MODEL_CHAIN: str = ("doubao-seedance-1-0-pro-250528,"
+    JIMENG_MODEL: str = "doubao-seedance-1-0-pro-fast-250528"  # 默认=最便宜可用档
+    # 模型链：⚠️ 链序=付费序!账户有余额时免费额度用尽后会按首个模型价格【静默扣费】(不报错不切换),
+    # 所以必须便宜在前。官方价(元/百万token): pro-fast 4.2 | 1.5-pro无声 8 | lite 10 | pro 15。
+    # 一条5s竖屏≈25万token → pro-fast≈¥1.04/条(治愈微动足够), pro≈¥3.7(别当主力)。
+    # 2.0/2.0-fast 在Ark是 46/37元/M(≈¥9/条),太贵不入链。
+    JIMENG_MODEL_CHAIN: str = ("doubao-seedance-1-0-pro-fast-250528,"
+                               "doubao-seedance-1-5-pro-250528,"
                                "doubao-seedance-1-0-lite-i2v-250428,doubao-seedance-1-0-lite-i2v-250528,"
-                               "doubao-seedance-1-5-pro-250528,doubao-seedance-1-0-pro-fast-250528")
+                               "doubao-seedance-1-0-pro-250528")
     JIMENG_IMAGE_MODEL: str = "doubao-seedream-4-0-250828"  # 即梦 Seedream 4.0（文生图 + 参考图锁脸）
     IP_REFERENCE_IMAGE: str = ""  # 固定IP定妆照路径(林溪+团团)；设了且有即梦key→每张图走Seedream参考图锁脸
     KEN_BURNS_ONLY: bool = True  # 验证期=True：治愈所有镜头都走免费Ken Burns(不花图生视频钱)；想开动作镜改False

@@ -325,6 +325,9 @@ class DynamicTTSEngine:
         self.model = "cosyvoice-v1"
         self.theme_key = theme_key
         self.theme_config = THEMES.get(theme_key, THEMES.get("hospital_horror", {}))
+        # 治愈线标记:决定 _build_instruction 走温暖分支(修复:此前治愈情绪全落进恐怖默认指令"诡异环境警惕不安")
+        self._healing = (not self.theme_config.get("is_serial", True)) or \
+                        self.theme_config.get("narration_mode") == "voiceover_offscreen"
 
         # P1: 初始化备选引擎
         self._f5tts = F5TTSEngine()
@@ -390,6 +393,19 @@ class DynamicTTSEngine:
     def _build_instruction(self, role: str, emotion: str) -> tuple[str, float]:
         is_clone = role and "克隆" in role
         speech_rate = 1.0  # Normal speed
+
+        # ── 治愈线分支(cozy 引擎):金句是全片唯一台词,交付质感在这里决定 ──
+        # 注:v2 公共音色不支持 instruction(实测428),instruction 仅在音色为 v3.5-plus 时生效;
+        #    但 speech_rate 全版本可用——治愈的"松弛感"主要靠放慢语速传递。
+        if self._healing:
+            if emotion in ("deadpan", "lazy"):
+                return "慵懒淡定,慢悠悠,带一点小得意的松弛感,像刚睡醒不想动。", 0.9
+            if emotion in ("playful", "cheerful"):
+                return "俏皮轻快,带着笑意,像跟好朋友开玩笑。", 1.0
+            if emotion in ("cool",):
+                return "清冷但不冰,淡淡的温柔藏在平静里。", 0.95
+            # warm / gentle / soft / 其余一律温柔治愈
+            return "温柔治愈,轻声细语,像深夜电台在安慰很累的人。", 0.95
 
         if is_clone:
             instruct = "极其冰冷无机质，语速极度缓慢，像机器一样毫无波澜，语调单一，没有任何情绪起伏。"
@@ -536,12 +552,14 @@ class DynamicTTSEngine:
 
         logger.info(f"[TTS] Generating for {role} ({emotion}): {clean_text} via VoiceID: {vid} (speed: {speed})")
 
-        # 致命修复：根据 VoiceID 前缀动态推断底模
+        # 致命修复：根据 VoiceID 前缀/后缀动态推断底模
         model_name = "cosyvoice-v1"
         if vid.startswith("cosyvoice-v3.5-plus"):
             model_name = "cosyvoice-v3.5-plus"
         elif vid.startswith("cosyvoice-v3.5"):
             model_name = "cosyvoice-v3.5"
+        elif vid.endswith("_v2"):
+            model_name = "cosyvoice-v2"  # v2 公共音色(如 longlaotie_v2):底模比 v1 自然一代,不支持 instruction(实测428)
 
         max_retries = 3
         for attempt in range(max_retries):

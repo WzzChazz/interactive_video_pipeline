@@ -223,7 +223,8 @@ def _kling_generate(image_path: str, save_path: Path, prompt: str = "") -> Path:
         img_raw_b64 = base64.b64encode(f.read()).decode("utf-8")
     
     payload = {
-        "model_name": "kling-v1",
+        # kling-v1(2024) 已老;默认升到 v1-6,可用 KLING_MODEL 环境变量覆盖(无key未实测,兜底通道)
+        "model_name": os.getenv("KLING_MODEL", "kling-v1-6"),
         "image": img_raw_b64,
         "prompt": prompt
     }
@@ -282,7 +283,8 @@ def _hailuo_generate(image_path: str, save_path: Path, prompt: str = "") -> Path
     img_data_uri = _image_to_base64_data_uri(image_path)
     
     payload = {
-        "model": "video-01",
+        # video-01(2024) 已老;默认升到 Hailuo-02,可用 HAILUO_MODEL 环境变量覆盖(无key未实测,兜底通道)
+        "model": os.getenv("HAILUO_MODEL", "MiniMax-Hailuo-02"),
         "prompt": prompt,
         "first_frame_image": img_data_uri
     }
@@ -510,10 +512,32 @@ def _seedance_generate_one(image_path: str, save_path: Path, prompt: str, model:
     return _poll_and_download_atomic(task_id, fetch_status, extract_url, save_path)
 
 
-_SEEDANCE_EXHAUSTED: set = set()  # 免费额度耗尽 / ID无效的模型，跳过不再试
+# 免费额度耗尽 / ID无效的模型 → 持久化到文件(重启不再反复撞429),72小时后自动重试(防欠费充值后仍被跳过)
+_EXHAUSTED_FILE = STORAGE_TEMP_DIR / "seedance_exhausted.json"
+_EXHAUSTED_TTL_HOURS = 72
+
+def _load_exhausted() -> dict:
+    try:
+        import json
+        data = json.loads(_EXHAUSTED_FILE.read_text())
+        now = time.time()
+        return {m: ts for m, ts in data.items() if now - ts < _EXHAUSTED_TTL_HOURS * 3600}
+    except Exception:
+        return {}
+
+_SEEDANCE_EXHAUSTED: dict = _load_exhausted()
+
+def _mark_exhausted(model: str) -> None:
+    _SEEDANCE_EXHAUSTED[model] = time.time()
+    try:
+        import json
+        _EXHAUSTED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _EXHAUSTED_FILE.write_text(json.dumps(_SEEDANCE_EXHAUSTED))
+    except Exception as e:
+        logger.warning(f"[Seedance] 持久化 exhausted 失败(仅影响重启后记忆): {e}")
 
 def _seedance_generate(image_path: str, save_path: Path, prompt: str = "") -> Path:
-    """Seedance 模型链：依次薅各模型 200万免费额度，某个用尽/ID无效自动切下一个，pro-fast 最后兜底。"""
+    """Seedance 模型链：便宜优先。某个用尽/ID无效自动切下一个(持久化跳过,72h后重试)。"""
     from config.settings import JIMENG_MODEL_CHAIN
     chain = [m.strip() for m in JIMENG_MODEL_CHAIN.split(",") if m.strip()] or [JIMENG_MODEL]
     last_err = None
@@ -529,8 +553,8 @@ def _seedance_generate(image_path: str, save_path: Path, prompt: str = "") -> Pa
             if any(q in es for q in ["arrearage", "quota", "欠费", "balance", "insufficient",
                                      "余额", "exhaust", "notfound", "not found", "invalidendpoint",
                                      "invalid endpoint", "404"]):
-                logger.warning(f"[Seedance] {model} 不可用(额度尽/ID错) → 切下一个")
-                _SEEDANCE_EXHAUSTED.add(model)
+                logger.warning(f"[Seedance] {model} 不可用(额度尽/ID错) → 切下一个(72h内跳过)")
+                _mark_exhausted(model)
                 last_err = e
                 continue
             raise

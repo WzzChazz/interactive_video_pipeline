@@ -60,11 +60,11 @@ THEMES = {
         "needs_lipsync": False,              # 唯一硬性禁用：不做对口型（杀恐怖谷嘴型）
         "is_serial": False,                  # 单条自包含，非连载
         "subtitle_on": True,                 # 配音 + 字幕双保险（静音党也能看）
-        "voice_id": "longxiaochun",          # 默认/旁白：温柔年轻女声
+        "voice_id": "longxiaochun_v2",       # 默认/旁白：温柔年轻女声（v2 底模,比 v1 自然一代,实测可用）
         "voice_map": {
-            "旁白": "longxiaochun",   # 温柔年轻女声旁白
-            "林溪": "longxiaochun",   # 年轻活泼少女 → 清甜年轻女声
-            "团团": "longlaotie",     # 蠢萌水豚 → 深沉老爷爷音（反差萌笑点核弹，保留）
+            "旁白": "longxiaochun_v2",   # 温柔年轻女声旁白
+            "林溪": "longxiaochun_v2",   # 年轻活泼少女 → 清甜年轻女声
+            "团团": "longlaotie_v2",     # 蠢萌水豚 → 深沉老爷爷音（反差萌笑点核弹，保留）
         },
         "audio_reverb_filter": "",
         "collection_name": "水豚的治愈日常"
