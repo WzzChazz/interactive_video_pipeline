@@ -206,7 +206,7 @@ def _build_healing_system_prompt(theme: dict) -> str:
         register_hook = textwrap.dedent("""\
 1. **FRAME-1 = 高浓度萌尖峰 + 温暖共鸣情境 (PROVEN: 8条爆款拆解都开在一张定住的萌脸,NOT 快切)**:
    ~43% swipe in <2s. Stop the thumb with 团团 at its ABSOLUTE CUTEST — 尖叫级 adorable, not background-calm — inside a
-   warm relatable moment (下班瘫软/被窝里探头/捧着热饮/看窗外的雨/晒太阳眯眼), framed TIGHT, 团团 large round fluffy.
+   warm relatable moment — PREFER "吃东西特写" (咬西瓜/啃玉米/捧奶茶小口嘬 — own data: eating scenes hit 9.1% completion vs 1-3% for idle staring), then 干件小事 (泡温泉/裹毯子/伸懒腰), AVOID pure idle 发呆/看雨 — framed TIGHT, 团团 large round fluffy.
    Aim for viewers to feel "啊啊啊太可爱了" (extreme cuteness itself drives 转发/收藏). Cuteness + "这一刻好治愈" = they stay.
    - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans. Open ON the adorable moment.
    - Hold the frame with SUBTLE life (slow blink, soft breath, tiny stretch). NOT rapid cuts, NOT a hard push.""")
@@ -595,6 +595,7 @@ def _build_user_prompt(
     character_profiles: Optional[str] = None,
     prev_analytics: Optional[dict] = None,
     theme_key: str = "hospital_horror",
+    picked: Optional[dict] = None,
 ) -> str:
     """
     构建发送给 LLM 的 User Prompt。
@@ -605,9 +606,18 @@ def _build_user_prompt(
     if not _t.get("is_serial", True):
         from config.settings import HEALING_STYLE
         topics = "周一赖床 / 下雨天 / 嚷着要减肥 / 加班回家 / 抢零食 / 第一次见到雪 / 夏天太热 / 想点外卖"
+        # 上游择优器给出的今日选题+金句(有则强制采用;无则回退静态题库自由发挥)
+        if picked:
+            topic_line = f"- 【今日选题,必须严格采用】{picked['topic']}"
+            quote_line = f"- 【结尾金句,必须一字不差地用作最后一镜的 dialogue】「{picked['quote']}」"
+        else:
+            topic_line = f"- 自由选一个温暖共鸣情境（如：{topics}）"
+            quote_line = ""
         if HEALING_STYLE == "cozy":
             style_lines = textwrap.dedent(f"""\
-            - 首帧=团团【尖叫级可爱】的一个温暖共鸣情境（如：{topics}），怼脸定格、让人"啊啊太可爱了/好治愈"。靠萌+音乐(BGM)扛全片。
+            {topic_line}
+            {quote_line}
+            - 首帧=团团【尖叫级可爱】的温暖共鸣情境怼脸定格、让人"啊啊太可爱了/好治愈"。靠萌+音乐(BGM)扛全片。
             - 全片攒一句【可截图的正向治愈金句】当核（团团或旁白说出观众心声，落点必须正向：被理解/被允许休息/被鼓励），
               作为大字字幕定帧收尾。例:"今天也辛苦了,回家可以什么都不做。""慢一点没关系,又不是只有你在赶路。"
               ⛔正向红线:绝不能丧/摆烂/躺平/emo/负能量——这句金句是别人【转发去安慰朋友/收藏起来看】的理由。
@@ -714,6 +724,15 @@ def generate_script(
         ScriptValidationError: LLM 返回内容无法通过 Pydantic 校验（多次重试后）
         LLMCallError: API 调用连续失败
     """
+    # 治愈线(cozy)：上游选题+金句择优(时效/去重/数据加权/10选1);失败回退旧行为
+    picked = None
+    _t = THEMES.get(theme_key, {})
+    if not _t.get("is_serial", True):
+        from config.settings import HEALING_STYLE
+        if HEALING_STYLE == "cozy":
+            from core.topic_quote_picker import pick_topic_and_quote
+            picked = pick_topic_and_quote(theme_key)
+
     user_prompt = _build_user_prompt(
         branch=branch,
         history_summary=history_summary,
@@ -722,6 +741,7 @@ def generate_script(
         character_profiles=character_profiles,
         prev_analytics=prev_analytics,
         theme_key=theme_key,
+        picked=picked,
     )
 
     logger.info(
@@ -764,6 +784,20 @@ def generate_script(
                 raise ScriptValidationError(f"Failed after {max_retries} attempts: {e}")
             logger.warning(f"Validation error (attempt {attempt+1}): {e}")
             user_prompt += f"\n\nFIX THIS VALIDATION ERROR: {e}"
+
+    # 择优金句强制落位:最后一句非空台词必须=评审选出的金句(防LLM改写/漏用)
+    if picked and picked.get("quote"):
+        _q = picked["quote"]
+        _placed = False
+        for _sc in reversed(script.scenes):
+            if (_sc.dialogue or "").strip():
+                if _sc.dialogue.strip() != _q:
+                    logger.info(f"[TopicPicker] 金句落位: 「{_sc.dialogue.strip()[:20]}」→「{_q}」")
+                    _sc.dialogue = _q
+                _placed = True
+                break
+        if not _placed and script.scenes:
+            script.scenes[-1].dialogue = _q
 
     logger.success(
         "Script generated: '{}' with {} scenes.",
