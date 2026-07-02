@@ -225,7 +225,8 @@ def stage_generate_images(script: dict, episode: Episode) -> dict:
     tag    = episode.episode_tag
     logger.info("[Stage 3/7] Generating images for {} ({} scenes)...", tag, len(scenes))
 
-    image_manifest = generate_images(scenes, tag, None, episode.id)
+    image_manifest = generate_images(scenes, tag, None, episode.id,
+                                     theme_key=getattr(episode, "theme_key", "hospital_horror"))
 
     # Update DB asset manifest (partial)
     with get_session() as session:

@@ -25,6 +25,117 @@ def wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[s
             lines.append(current_line)
     return lines
 
+def generate_quote_freeze_endcard(
+    quote: str,
+    output_path: str | Path,
+    fps: int = 30,
+    duration_sec: float = 3.0,
+    background_image_path: str | None = None,
+) -> Path:
+    """治愈线「金句大字定帧」片尾：尾帧微暗做底 + 正向治愈金句大字居中(柔和淡入,可截图) + 一声风铃。
+    编码参数与 typewriter endcard 完全一致,保证 concat 兼容。"""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    quote = (quote or "").strip().strip('"“”「」').strip()
+    # 优先在标点处断行(避免把词拆断,如"什/么"),wrap_text 会按 \n 分段再按宽度兜底
+    for _p in (",", "，", ";", "；", "、"):
+        quote = quote.replace(_p, _p + "\n")
+    quote = quote.rstrip("\n")
+    font_path = "/System/Library/Fonts/Supplemental/Songti.ttc"
+    font_size = 76
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+        small_font = ImageFont.truetype(font_path, 40)
+    except IOError:
+        font = ImageFont.load_default()
+        small_font = font
+
+    margin_x = 100
+    lines = wrap_text(quote, font, VIDEO_WIDTH - margin_x * 2)
+
+    from PIL import ImageEnhance
+    if background_image_path and Path(background_image_path).exists():
+        base_img = Image.open(background_image_path).convert("RGB").resize((VIDEO_WIDTH, VIDEO_HEIGHT))
+        # 微暗保白字可读,但不能压死治愈感
+        base_img = ImageEnhance.Brightness(base_img).enhance(0.62)
+    else:
+        base_img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), color=(248, 240, 228))
+
+    # 文字层(透明底,逐帧调 alpha 实现 0.6s 柔和淡入)
+    text_layer = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
+    d = ImageDraw.Draw(text_layer)
+    line_h = font_size + 26
+    block_h = len(lines) * line_h
+    y = (VIDEO_HEIGHT - block_h) // 2 - 60  # 垂直居中略偏上(同封面手机安全区)
+    for line in lines:
+        x = (VIDEO_WIDTH - font.getlength(line)) / 2
+        d.text((x + 3, y + 3), line, font=font, fill=(122, 82, 48, 170))
+        d.text((x, y), line, font=font, fill=(255, 252, 245, 255))
+        y += line_h
+    sig = "—— 团团"
+    sx = (VIDEO_WIDTH - small_font.getlength(sig)) / 2
+    d.text((sx, y + 34), sig, font=small_font, fill=(255, 246, 229, 235))
+
+    total_frames = max(1, int(duration_sec * fps))
+    fade_frames = max(1, int(0.6 * fps))
+
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_vid:
+        tmp_vid_path = tmp_vid.name
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{VIDEO_WIDTH}x{VIDEO_HEIGHT}", "-pix_fmt", "rgb24",
+        "-framerate", str(fps), "-i", "-",
+        "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+        tmp_vid_path,
+    ]
+    process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    alpha_src = text_layer.getchannel("A")
+    for i in range(total_frames):
+        factor = min(1.0, (i + 1) / fade_frames)
+        frame = base_img.copy()
+        if factor >= 1.0:
+            frame.paste(text_layer, (0, 0), text_layer)
+        else:
+            layer = text_layer.copy()
+            layer.putalpha(alpha_src.point(lambda a, f=factor: int(a * f)))
+            frame.paste(layer, (0, 0), layer)
+        process.stdin.write(frame.tobytes())
+    process.stdin.close()
+    process.wait()
+
+    # 音频:一声柔和风铃(与 typewriter healing 片尾同款),48k 双声道,concat 兼容
+    import numpy as np
+    from scipy.io import wavfile
+    sample_rate = 48000
+    total_samples = int(duration_sec * sample_rate)
+    audio = np.zeros((total_samples, 2), dtype=np.float32)
+    chime_len = min(int(0.8 * sample_rate), total_samples)
+    if chime_len > 0:
+        t_c = np.linspace(0, chime_len / sample_rate, chime_len, False)
+        chime = (0.14 * np.sin(2 * np.pi * 880 * t_c) +
+                 0.07 * np.sin(2 * np.pi * 1320 * t_c)) * np.exp(-t_c * 3.5)
+        audio[:chime_len, 0] += chime
+        audio[:chime_len, 1] += chime
+    max_val = np.max(np.abs(audio))
+    if max_val > 0:
+        audio /= max_val
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_aud:
+        tmp_aud_path = tmp_aud.name
+    wavfile.write(tmp_aud_path, sample_rate, (audio * 32767).astype(np.int16))
+
+    subprocess.run([
+        "ffmpeg", "-y", "-i", tmp_vid_path, "-i", tmp_aud_path,
+        "-c:v", "copy", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest",
+        str(output_path),
+    ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    Path(tmp_vid_path).unlink(missing_ok=True)
+    Path(tmp_aud_path).unlink(missing_ok=True)
+    logger.success(f"Quote freeze endcard generated: {output_path}")
+    return output_path
+
+
 def generate_typewriter_endcard(
     branch_a: str,
     branch_b: str,

@@ -333,6 +333,38 @@ def _call_dashscope_wanx(prompt: str) -> str:
 
 from typing import Optional, Union, Dict
 
+
+def _hook_frame_qa(image_path: Path) -> Optional[int]:
+    """首帧萌度质检(治愈线 scene1 专用)：qwen-vl 按「0.5秒停拇指的萌度」打 1-5 分。
+    无 key / 超时 / 任何失败 → 返回 None 放行(fail-open,绝不阻断管线)。带线程超时防 DashScope 挂起。"""
+    from config.settings import DASHSCOPE_API_KEY
+    if not DASHSCOPE_API_KEY:
+        return None
+
+    def _call():
+        import dashscope, re
+        dashscope.api_key = DASHSCOPE_API_KEY
+        resp = dashscope.MultiModalConversation.call(
+            model="qwen-vl-max",
+            messages=[{"role": "user", "content": [
+                {"image": f"file://{Path(image_path).absolute()}"},
+                {"text": "这是治愈系萌宠短视频的第一帧(同时是封面)。请为它打分:它在0.5秒内让人停下拇指的『萌度/抓眼程度』——5=尖叫级可爱、主体大而突出;3=普通可爱;1=呆板/主体太小/画面空。只输出一个1-5的数字,不要任何其他文字。"},
+            ]}],
+        )
+        if resp.status_code != 200:
+            return None
+        m = re.search(r"[1-5]", resp.output.choices[0].message.content[0]["text"])
+        return int(m.group(0)) if m else None
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(_call).result(timeout=45)
+    except Exception as e:
+        logger.warning(f"[HookQA] 萌度质检失败(放行): {e}")
+        return None
+
+
 def generate_single_image(
     scene_index: int,
     visual_prompt: Union[str, Dict],
@@ -340,6 +372,7 @@ def generate_single_image(
     character_ref_url: Optional[str] = None,
     width: int = VIDEO_WIDTH,
     height: int = VIDEO_HEIGHT,
+    hook_qa: bool = False,
 ) -> Path:
     """
     生成单张分镜图并保存到 save_path。
@@ -379,20 +412,31 @@ def generate_single_image(
     _ref = character_ref_url or IP_REFERENCE_IMAGE
     if _ref and JIMENG_API_KEY and os.path.exists(_ref):
         _provider_chain.insert(0, ("Jimeng Seedream(参考图锁脸)", lambda p: _call_jimeng_seedream(p, _ref)))
-    img_url = None
-    _errs = []
-    for _name, _fn in _provider_chain:
-        try:
-            img_url = _fn(final_prompt)
-            logger.info(f"[ImageGen] Scene {scene_index} 生图成功 via {_name}")
+    # 首帧萌度门(hook_qa=True 时):生成→打分,<4 分重生成一次;第二次无论多少分都放行(fail-open)
+    for _attempt in (1, 2):
+        img_url = None
+        _errs = []
+        for _name, _fn in _provider_chain:
+            try:
+                img_url = _fn(final_prompt)
+                logger.info(f"[ImageGen] Scene {scene_index} 生图成功 via {_name}")
+                break
+            except Exception as _e:
+                _errs.append(f"{_name}: {str(_e)[:80]}")
+        if not img_url:
+            raise ImageGenError(f"所有生图供应商均失败: {' | '.join(_errs)}")
+
+        _download_image(img_url, save_path)
+
+        if not hook_qa or _attempt == 2:
             break
-        except Exception as _e:
-            _errs.append(f"{_name}: {str(_e)[:80]}")
-    if not img_url:
-        raise ImageGenError(f"所有生图供应商均失败: {' | '.join(_errs)}")
-            
-    _download_image(img_url, save_path)
-    
+        _score = _hook_frame_qa(save_path)
+        if _score is None or _score >= 4:
+            if _score is not None:
+                logger.success(f"[HookQA] Scene {scene_index} 首帧萌度 {_score}/5 ✅")
+            break
+        logger.warning(f"[HookQA] Scene {scene_index} 首帧萌度 {_score}/5 <4 → 重新生成一次(前2秒跳出的门面,值得重抽)")
+
     # 执行 QA
     logger.info(f"[Visual QA] 正在审核 Scene {scene_index}...")
     try:
@@ -420,10 +464,13 @@ def generate_images(
     episode_tag: str,
     character_ref_url: Optional[str] = None,
     episode_id: Optional[int] = None,
+    theme_key: str = "hospital_horror",
 ) -> dict[int, str]:
     """
-    并发生成所有分镜图片（带断点续跑）。
+    并发生成所有分镜图片（带断点续跑）。治愈线 scene1 走首帧萌度质检(hook_qa)。
     """
+    from config.themes import THEMES
+    _healing = not THEMES.get(theme_key, {}).get("is_serial", True)
     img_dir = STORAGE_TEMP_DIR / episode_tag / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
 
@@ -455,6 +502,7 @@ def generate_images(
                 visual_prompt=prompt,
                 save_path=path,
                 character_ref_url=character_ref_url,
+                hook_qa=(_healing and idx == 1),
             )
             # 更新成功状态
             if episode_id is not None:

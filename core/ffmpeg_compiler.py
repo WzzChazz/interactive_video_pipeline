@@ -491,6 +491,7 @@ def _mux_final_video(
     platform: str = "douyin",
     last_image_path: Optional[str] = None,
     theme_key: str = "hospital_horror",
+    golden_quote: str = "",
 ) -> Path:
     """将拼接好的视频与混音轨、字幕进行最终封装，并叠加双轨专属特效。"""
 
@@ -593,10 +594,11 @@ def _mux_final_video(
     tmp_main = output_path.with_name(f"tmp_main_{platform}.mp4")
     _run_ffmpeg(input_args + output_args + ["-y", str(tmp_main)], step_name="mux_main")
     
-    # 2. 如果存在分支，则生成独立打字机片尾并拼接
-    if branch_a and branch_b:
-        from core.endcard_generator import generate_typewriter_endcard
-        
+    # 2. 片尾：治愈线优先「金句大字定帧」(可截图,转发/收藏钩子)；否则沿用打字机分支片尾
+    use_quote_card = healing and bool(golden_quote.strip())
+    if use_quote_card or (branch_a and branch_b):
+        from core.endcard_generator import generate_typewriter_endcard, generate_quote_freeze_endcard
+
         # 【核心修复】：动态从刚生成的主视频末尾截取一帧作为片尾底图
         extracted_bg = output_path.with_name(f"extracted_bg_{platform}.jpg")
         try:
@@ -615,18 +617,28 @@ def _mux_final_video(
             actual_bg_path = last_image_path
 
         tmp_endcard = output_path.with_name(f"tmp_endcard_{platform}.mp4")
-        
-        # 将真实截屏路径传入打字机引擎
-        generate_typewriter_endcard(
-            branch_a,
-            branch_b,
-            tmp_endcard,
-            fps=30,
-            duration_sec=6.0,
-            chars_per_sec=12.0,
-            background_image_path=actual_bg_path,
-            healing=healing,
-        )
+
+        if use_quote_card:
+            # 治愈线：尾帧定格 + 金句大字(淡入,可截图) + 风铃
+            generate_quote_freeze_endcard(
+                golden_quote,
+                tmp_endcard,
+                fps=30,
+                duration_sec=3.0,
+                background_image_path=actual_bg_path,
+            )
+        else:
+            # 将真实截屏路径传入打字机引擎
+            generate_typewriter_endcard(
+                branch_a,
+                branch_b,
+                tmp_endcard,
+                fps=30,
+                duration_sec=6.0,
+                chars_per_sec=12.0,
+                background_image_path=actual_bg_path,
+                healing=healing,
+            )
         
         # 拼接
         concat_list = output_path.with_name(f"concat_list_final_{platform}.txt")
@@ -834,6 +846,15 @@ def compile_video(
         # ── 4. 生成字幕并合片 (双轨专属渲染) ───────────────────────────────
         result_paths = {}
         
+        # 治愈线：取全片最后一句非空台词作为「金句定帧」片尾的金句
+        golden_quote = ""
+        if _is_healing_theme(theme_key):
+            for _sc in reversed(sorted_scenes):
+                _d = str(_sc.get("dialogue") or "").strip()
+                if _d:
+                    golden_quote = _d
+                    break
+
         # 中文字幕通用 (传递 audio_manifest 用于获取 VTT 时间轴)
         srt_cn_content = _generate_srt(sorted_scenes, scene_durations, audio_manifest, lang="cn")
         srt_cn_path = tmp_dir / "subs_cn.srt"
@@ -842,12 +863,12 @@ def compile_video(
         
         if render_mode in ("all", "douyin_only"):
             final_douyin = out_dir / f"{episode_tag}_douyin.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin", last_image_path=last_image_path, theme_key=theme_key)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_douyin, total_duration, next_branches, banner_text=banner_text, platform="douyin", last_image_path=last_image_path, theme_key=theme_key, golden_quote=golden_quote)
             result_paths["douyin"] = str(final_douyin)
             
         if render_mode in ("all", "kuaishou_only"):
             final_ks = out_dir / f"{episode_tag}_kuaishou.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou", last_image_path=last_image_path, theme_key=theme_key)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_cn_path, final_ks, total_duration, next_branches, banner_text=banner_text, platform="kuaishou", last_image_path=last_image_path, theme_key=theme_key, golden_quote=golden_quote)
             result_paths["kuaishou"] = str(final_ks)
             
         if render_mode in ("all", "global_only"):
@@ -857,7 +878,7 @@ def compile_video(
                 f.write(srt_en_content)
 
             final_global = out_dir / f"{episode_tag}_global.mp4"
-            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global", last_image_path=last_image_path, theme_key=theme_key)
+            _mux_final_video(raw_video, mixed_audio if audio_result else None, srt_en_path, final_global, total_duration, next_branches, banner_text=banner_text, platform="global", last_image_path=last_image_path, theme_key=theme_key, golden_quote=golden_quote)
             result_paths["global"] = str(final_global)
 
     logger.success("FFmpeg Compilation COMPLETED: {}", result_paths)
