@@ -722,6 +722,9 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
             # 而非一段静态描述让它自己猜。第二拍专放团团慢半拍的呆萌反应＝放大反差萌卖点。
             act = pose if pose else "settling in cozily with a soft natural micro-movement"
             cam = base_camera or "slow gentle push-in"
+            if idx == 1:
+                # 首镜(强制微动):定机位守住萌构图,只留 idle 微动作——拆解8条爆款=定格的萌脸,非推拉
+                cam = "locked-off static camera, HOLD the adorable framing exactly"
             camera_note = (
                 f"[Subject] An elegant calm young woman (Lin Xi) and a round chubby derpy capybara (Tuan Tuan), soft anime illustration style.\n"
                 f"[Environment] cozy warm home, soft natural daylight, pastel cream tones, plants.\n"
@@ -762,7 +765,10 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
 
         try:
             # 快切开场已撤(make_punch_cut_clip 保留但不再路由)：拆解8条爆款证明赢家是"萌脸定格+微动",非快切。
-            if healing and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
+            # 首镜=决定2秒跳出的唯一画面:scene1无台词时LLM常标needs_motion=false→Ken Burns静图=死图。
+            # 强制首镜走图生视频微动(pro-fast≈¥1/条,买首帧"活着":眨眼/呼吸)。KEN_BURNS_ONLY=true(零花费开关)时仍尊重。
+            _force_hook_motion = healing and idx == 1 and not KEN_BURNS_ONLY
+            if healing and not _force_hook_motion and (KEN_BURNS_ONLY or not scene.get("needs_motion", False)):
                 _why = "验证期全Ken Burns" if KEN_BURNS_ONLY else "静镜"
                 logger.info(f"Scene {idx}: {_why} → Ken Burns 缓慢推拉（免费）")
                 make_ken_burns_clip(img_path, save_path, duration=5.0, seed=idx)

@@ -321,6 +321,7 @@ def stage_compile(asset_manifest: dict, episode: Episode) -> str:
         next_branches=script_data.get("next_branches", {}),
         banner_text=banner_text,
         cover_teaser=cover_teaser,
+        bgm_mood=script_data.get("bgm_mood", "warm"),
     )
 
     # 生成封面 (Cover Generation) — 优先使用 LLM 标注的最高潮分镜

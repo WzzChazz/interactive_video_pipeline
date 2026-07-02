@@ -46,15 +46,36 @@ def _is_healing_theme(theme_key: str) -> bool:
     return (not t.get("is_serial", True)) or t.get("narration_mode") == "voiceover_offscreen"
 
 
-def _pick_healing_bgm() -> Optional[str]:
-    """从 sfx_library/bgm_healing/ 随机挑一首治愈 BGM；无文件则返回 None。"""
+def _pick_healing_bgm(mood: str = "warm") -> Optional[str]:
+    """按情绪挑治愈 BGM(不再瞎随机):
+    优先 sfx_library/bgm_healing/<mood>/ 子目录 → 其次文件名前缀 <mood>_ → 兜底全库随机。
+    曲库整理方式: 把7首按情绪分进 calm/ playful/ warm/ 三个子文件夹(或改名 warm_xxx.mp3)。"""
     import random
+    _AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".flac")
     bgm_dir = Path(__file__).resolve().parent.parent / "sfx_library" / "bgm_healing"
     if not bgm_dir.exists():
         return None
-    files = [p for p in bgm_dir.iterdir()
-             if p.suffix.lower() in (".mp3", ".wav", ".m4a", ".aac", ".flac")]
-    return str(random.choice(files)) if files else None
+    mood = (mood or "warm").strip().lower()
+    # 1) 子目录
+    sub = bgm_dir / mood
+    if sub.is_dir():
+        files = [p for p in sub.iterdir() if p.suffix.lower() in _AUDIO_EXT]
+        if files:
+            pick = random.choice(files)
+            logger.info(f"[BGM] 按情绪 {mood}/ 选曲: {pick.name}")
+            return str(pick)
+    # 2) 文件名前缀
+    files = [p for p in bgm_dir.iterdir() if p.suffix.lower() in _AUDIO_EXT]
+    prefixed = [p for p in files if p.stem.lower().startswith(mood + "_")]
+    if prefixed:
+        pick = random.choice(prefixed)
+        logger.info(f"[BGM] 按前缀 {mood}_ 选曲: {pick.name}")
+        return str(pick)
+    # 3) 兜底
+    if files:
+        logger.info(f"[BGM] 情绪 {mood} 无匹配曲目,全库随机(建议整理曲库)")
+        return str(random.choice(files))
+    return None
 
 
 # ──────────────────────────────────────────────────────────
@@ -306,6 +327,7 @@ def _build_audio_track(
     theme_key: str,
     output_path: Path,
     tmp_dir: Path,
+    bgm_mood: str = "warm",
 ) -> Optional[Path]:
     """
     将各分镜的 voice + sfx 按时间偏移混入一条完整音轨。
@@ -349,7 +371,7 @@ def _build_audio_track(
 
     # ── 治愈 BGM 音乐底层（capybara_healing 等治愈题材专用）────────────────
     if _is_healing_theme(theme_key):
-        _bgm = _pick_healing_bgm()
+        _bgm = _pick_healing_bgm(bgm_mood)
         if _bgm:
             fade_out_st = max(0.0, total_duration - 1.5)
             input_args += ["-i", _bgm]
@@ -683,6 +705,7 @@ def compile_video(
     next_branches: dict = None,
     banner_text: str = "",
     cover_teaser: str = "",
+    bgm_mood: str = "warm",
 ) -> dict[str, str]:
     """
     将所有资产合成为最终成品视频（双轨渲染）。
@@ -839,7 +862,8 @@ def compile_video(
         # ── 3. 生成混合音轨 ───────────────────────────────────
         mixed_audio = tmp_dir / "mixed_audio.aac"
         audio_result = _build_audio_track(
-            sorted_scenes, audio_manifest, scene_durations, total_duration, theme_key, mixed_audio, tmp_dir
+            sorted_scenes, audio_manifest, scene_durations, total_duration, theme_key, mixed_audio, tmp_dir,
+            bgm_mood=bgm_mood,
         )
         logger.info("Step 2/3 done: audio track built (has_audio={})", audio_result is not None)
 

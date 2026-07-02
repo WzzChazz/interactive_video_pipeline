@@ -161,6 +161,7 @@ class EpisodeScript(BaseModel):
         description="短促、极具吸引力的视频封面引导文字（如：你敢进去吗？真假双生子），限制 10个字以内"
     )
     chosen_branch: str = Field(..., description="本集驱动分支：A / B / INIT")
+    bgm_mood: str = Field("warm", description="治愈线BGM情绪(calm|playful|warm),用于合片按情绪选曲;恐怖线忽略")
     scenes: list[SceneShot] = Field(
         ..., min_length=3, max_length=7,
         description="分镜列表：恐怖连载 6-7 个（35-40秒）；治愈单条 2-3 个（10-14秒，BGM+萌情境主导，完播优先）"
@@ -325,6 +326,7 @@ big IPs are too lazy to do — used ONCE, never a monologue. KEEP IT SHORT, CUTE
   "episode_summary": "string (Chinese, 20-300 chars, warm caption with healing hashtags)",
   "cover_teaser": "string (Chinese, ≤10 chars, cute hook)",
   "chosen_branch": "INIT",
+  "bgm_mood": "string, one of: calm(安静治愈/看雨/睡前) | playful(俏皮/吃东西/小得意) | warm(温暖/被理解/晚安) — match the skit's emotional register",
   "scenes": [
     {
       "scene_index": 1,
