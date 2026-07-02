@@ -321,7 +321,7 @@ big IPs are too lazy to do — used ONCE, never a monologue. KEEP IT SHORT, CUTE
 
 ## REQUIRED JSON SCHEMA
 """ + """{
-  "episode_title": "string (Chinese, ≤30 chars, NO episode number). 标题=feed流里的钩子,必须明确具体(平台标题质量评分要求): 点名场景+团团的反差梗/共鸣点,让人一眼知道在看啥且想点开。可带1个垂直话题词(如#水豚 #治愈 #打工人嘴替)。坏例:'温暖的一天'(空泛);好例:'问水豚周一为啥不上班,它的回答让我沉默了'",
+  "episode_title": "string (Chinese, ≤30 chars, NO episode number). 标题公式=【主体+画面动作】+【情绪价值钩】,两段缺一不可(平台机器比对标题↔画面实体,不一致直接判低分): 前半段必须含'水豚/团团'+画面里真实发生的动作(吃西瓜/啃玉米/泡温泉),后半段给情绪钩(治愈/解压/下班/加班共鸣)。⛔绝对禁止把治愈金句直接当标题(标题无画面词→机器判'标题与内容不一致',实测只有32分)——金句放 episode_summary 第二行。好例:'水豚团团啃玉米,治愈了加班的我🌽';坏例:'今天也辛苦了,回家歇一会儿'(无主体无动作)",
   "episode_summary": "string (Chinese, 20-300 chars, warm caption with healing hashtags)",
   "cover_teaser": "string (Chinese, ≤10 chars, cute hook)",
   "chosen_branch": "INIT",
@@ -622,7 +622,9 @@ def _build_user_prompt(
               作为大字字幕定帧收尾。例:"今天也辛苦了,回家可以什么都不做。""慢一点没关系,又不是只有你在赶路。"
               ⛔正向红线:绝不能丧/摆烂/躺平/emo/负能量——这句金句是别人【转发去安慰朋友/收藏起来看】的理由。
             - 大部分镜 dialogue 留空,靠萌画面+BGM;不要快切、不要复杂剧情。
-            - episode_summary(文案)结尾带暖CTA『发给最近很累的人』引导转发,但【别硬导私域/别留微信】。""")
+            - 标题公式=【水豚/团团+画面动作】+【情绪钩】(如"水豚团团啃玉米,治愈了加班的我")。
+              ⛔金句不能当标题(平台判"标题与画面不一致"只给32分)——金句放文案第二行+片尾定帧卡。
+            - episode_summary(文案)结构: 第一行呼应标题,第二行放金句原句,结尾带暖CTA『发给最近很累的人』,【别硬导私域/别留微信】。""")
         else:  # sassy
             style_lines = textwrap.dedent(f"""\
             - 首帧=团团在某个「打工人共鸣情境」（如：{topics}）里【正在干事/正在反应】，表情要有戏（瞪眼/嫌弃/得意/摊手/装死），有事在发生、别发呆。
