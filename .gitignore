@@ -43,3 +43,8 @@ chatgpt.jpg
 scripts/archive/test_sf_kolors.py
 scripts/archive/test_sf_models.py
 scripts/archive/test_sf_new.py
+
+# 曲库例外:治愈BGM需随仓库走(换机即用),定向放行,不打开所有mp3口子
+!sfx_library/bgm_healing/
+!sfx_library/bgm_healing/**/
+!sfx_library/bgm_healing/**/*.mp3
