@@ -164,6 +164,11 @@ def generate_cover(image_path: Path, title: str, sub_title: str, output_path: Pa
     main_title = safe_title
     if "：" in main_title:
         main_title = main_title.split("：")[-1]
+    # 新标题公式=「主体+动作,情绪钩」→ 封面只取逗号前第一段(主体+动作),避免10字硬截断在句中
+    for _sep in (",", "，"):
+        if _sep in main_title:
+            main_title = main_title.split(_sep)[0]
+            break
     main_title = main_title[:10]
     
     # 动态副标题，如果为空则默认
