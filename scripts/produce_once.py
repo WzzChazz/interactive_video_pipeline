@@ -59,7 +59,7 @@ def main() -> int:
         f"「团团的晚安治愈」第 {_series_no} 句 · 每晚更新\n\n"
         f"BGM情绪: {getattr(script, 'bgm_mood', 'warm')}\n"
         f"发布清单: 挂平台热门治愈BGM(音量20-30%) / 加合集「团团的晚安治愈」/ "
-        f"#水豚 #治愈 #下班 +1热话题 / 勾AIGC / 发布后置顶自评引导互动\n",
+        f"#水豚 #治愈 #晚安 +1热话题 / 勾AIGC / 发布后置顶自评引导互动\n",
         encoding="utf-8")
     logger.success(f"✅ 出片完成: {paths}")
     logger.success(f"   发布物料: {out_dir / f'{TAG}_发布物料.txt'}")
