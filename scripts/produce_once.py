@@ -53,7 +53,7 @@ def main() -> int:
                        out_dir / f"{TAG}_cover.jpg", theme_key=THEME)
 
     # 发布物料(晚上人工发布时复制即用);系列编号=已产出集数(收藏集邮/追更钩子)
-    _series_no = len([d for d in STORAGE_OUTPUT_DIR.glob("CAPY_*") if d.is_dir()])
+    _series_no = len([d for d in STORAGE_OUTPUT_DIR.glob("CAPY_2*") if d.is_dir()])  # 只数日期目录,排除CAPY_E2E_*测试目录
     (out_dir / f"{TAG}_发布物料.txt").write_text(
         f"标题:\n{script.episode_title}\n\n文案:\n{script.episode_summary}\n"
         f"「团团的晚安治愈」第 {_series_no} 句 · 每晚更新\n\n"
