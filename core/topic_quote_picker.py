@@ -100,6 +100,26 @@ def _recent_titles(theme_key: str, limit: int = 10) -> list[str]:
         return []
 
 
+# 本地历史账本:produce_once 不写DB,DB去重对每日自动出片是瞎的 → 择优器自己记自己读
+from pathlib import Path as _Path
+_HISTORY_FILE = _Path(__file__).resolve().parent.parent / "storage" / "topic_history.json"
+
+def _load_history(limit: int = 14) -> list[dict]:
+    try:
+        return json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))[-limit:]
+    except Exception:
+        return []
+
+def _append_history(entry: dict) -> None:
+    try:
+        hist = _load_history(limit=60)
+        hist.append(entry)
+        _HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _HISTORY_FILE.write_text(json.dumps(hist[-60:], ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"[TopicPicker] 写历史账本失败(仅影响去重): {e}")
+
+
 def _chat(messages: list[dict], temperature: float) -> str:
     import openai
     from config.settings import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
@@ -126,8 +146,8 @@ def pick_topic_and_quote(theme_key: str = "capybara_healing") -> Optional[dict]:
             weekday=weekday,
             season=_season_of(now.month),
             situation_pool=_SITUATION_POOL,
-            recent_titles="\n".join(f"- {t}" for t in _recent_titles(theme_key)) or "(暂无)",
-        )
+            recent_titles="\n".join(f"- {t}" for t in (_recent_titles(theme_key) + [h.get("topic","") for h in _load_history()])) or "(暂无)",
+        ) + "\n\n## 最近已用过的金句(禁止重复或高度相似)\n" + ("\n".join(f"- {h.get('quote','')}" for h in _load_history() if h.get("quote")) or "(暂无)")
         data = _parse_json(_chat([{"role": "user", "content": gen_prompt}], temperature=0.9))
         topic = str(data.get("topic", "")).strip()
         candidates = [str(c).strip() for c in data.get("candidates", []) if str(c).strip()]
@@ -144,14 +164,15 @@ def pick_topic_and_quote(theme_key: str = "capybara_healing") -> Optional[dict]:
         best = str(judge.get("best", "")).strip().strip('"“”「」')
         # 评审输出必须命中候选之一(防它自己现编);没命中就取第一句
         quote = best if best in candidates else candidates[0]
-        if len(quote) > 24:
-            quote = quote[:24]
+        if len(quote) > 20:
+            quote = quote[:20]  # 末镜5s上限:>20字配音会溢出被截断
         best_op = str(judge.get("best_opener", "")).strip().strip('"“”「」')
         opener = best_op if best_op in openers else (openers[0] if openers else "")
-        if len(opener) > 16:
-            opener = opener[:16]
+        if len(opener) > 14:
+            opener = opener[:14]
 
         logger.success(f"[TopicPicker] 选题:「{topic}」 开场:「{opener}」 金句:「{quote}」 ({judge.get('reason','')[:40]})")
+        _append_history({"date": now.strftime("%Y-%m-%d"), "topic": topic, "quote": quote, "opener": opener})
         return {"topic": topic, "quote": quote, "opener": opener}
     except Exception as e:
         logger.warning(f"[TopicPicker] 择优失败(回退旧行为): {e}")
