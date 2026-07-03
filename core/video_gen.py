@@ -726,7 +726,7 @@ def generate_video_clips(scenes: list[dict], image_manifest: dict[int, str], epi
                 # 首镜(强制微动):定机位守住萌构图,只留 idle 微动作——拆解8条爆款=定格的萌脸,非推拉
                 cam = "locked-off static camera, HOLD the adorable framing exactly"
             camera_note = (
-                f"[Subject] An elegant calm young woman (Lin Xi) and a round chubby derpy capybara (Tuan Tuan), cute 3D cartoon render style (Pixar-like, blind-box figurine quality).\n"
+                f"[Subject] A super cute round chubby derpy 3D cartoon capybara (Tuan Tuan), Pixar-like blind-box figurine quality, solo main character large in frame.\n"
                 f"[Environment] cozy warm home, soft natural daylight, pastel cream tones, plants.\n"
                 f"[0-2s] {act}. Only the lightest natural motion — a blink, a breath, hair/clothes swaying gently.\n"
                 f"[2-5s] the motion continues softly; Tuan Tuan reacts a beat late with a deadpan derpy little move (slow blink / tiny head tilt).\n"

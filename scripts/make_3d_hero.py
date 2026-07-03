@@ -18,9 +18,9 @@ def main() -> int:
 
     lock = THEMES["capybara_healing"]["character_prompt_lock"]
     prompt = (
-        f"{lock}, both characters together front-facing and fully visible, Lin Xi sitting on a cozy rug "
-        f"with Tuan Tuan the capybara beside her, bright warm sunlit living room, character reference sheet "
-        f"quality, clean composition, centered, vertical 9:16"
+        f"{lock}, Tuan Tuan alone front-facing and fully visible, sitting cozily on a soft rug, "
+        f"bright warm sunlit living room, character reference sheet quality, clean composition, "
+        f"centered, vertical 9:16"
     )
     out_dir = Path("storage/ip_reference")
     out_dir.mkdir(parents=True, exist_ok=True)

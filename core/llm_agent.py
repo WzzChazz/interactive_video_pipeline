@@ -298,7 +298,7 @@ big IPs are too lazy to do — used ONCE, never a monologue. KEEP IT SHORT, CUTE
 - SHOT VARIETY & SPATIAL DEPTH (fixes cramped framing): do NOT make every shot a tight close-up of
   both crammed together. BUT — Scene 1 is the FRAME-1 thumb-stopper (rule #1) and must NOT be a wide
   establishing shot. Put the WIDE establishing shot at Scene 2 (AFTER the hook has already hooked them),
-  showing the space with depth and both characters within it; then mix medium and close shots.
+  showing the space with depth and 团团 within it; then mix medium and close shots.
   At least 1 wide spatial shot per skit (but never as the opener).
 - 团团 STAYS PROMINENT: even in wide shots keep Tuan Tuan clearly visible and LARGE in the FOREGROUND/
   MIDGROUND — never tiny or far in the distance (a tiny capybara becomes an unrecognizable blob). The
@@ -636,7 +636,13 @@ def _build_user_prompt(
             - 大部分镜 dialogue 留空,靠萌画面+BGM;不要快切、不要复杂剧情。
             - 标题公式=【水豚/团团+画面动作】+【情绪钩】(如"水豚团团啃玉米,治愈了加班的我")。
               ⛔金句不能当标题(平台判"标题与画面不一致"只给32分)——金句放文案第二行+片尾定帧卡。
-            - episode_summary(文案)结构: 第一行呼应标题,第二行放金句原句,结尾带暖CTA『发给最近很累的人』,【别硬导私域/别留微信】。""")
+            - episode_summary(文案)结构: 第一行呼应标题,第二行放金句原句,第三行固定栏目名「团团的下班治愈」,
+              结尾 CTA 从下面三种里选【最贴合本集】的一种(轮换,别每次都一样,别硬导私域/留微信):
+              ①收件人视角(转发装置): "如果有人把这条发给你,是TA在偷偷心疼你。"
+              ②具体角色转发: "发给你那个总说'没事我不累'的人。"(角色可换: 对象/闺蜜/合租室友/爸妈)
+              ③点赞语义化: "点个赞,当作给今天的自己一个抱抱。"
+            - 【团团=唯一主角】所有 visual_prompt 里只有团团一个角色;林溪最多以画外方式存在
+              (一只手递零食/一条毯子被盖上),整集至多1镜、绝不露脸——单一IP=萌浓度不稀释、角色一致性减半难度。""")
         else:  # sassy
             style_lines = textwrap.dedent(f"""\
             - 首帧=团团在某个「打工人共鸣情境」（如：{topics}）里【正在干事/正在反应】，表情要有戏（瞪眼/嫌弃/得意/摊手/装死），有事在发生、别发呆。
