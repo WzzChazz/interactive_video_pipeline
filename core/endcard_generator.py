@@ -73,7 +73,7 @@ def generate_quote_freeze_endcard(
         d.text((x + 3, y + 3), line, font=font, fill=(122, 82, 48, 170))
         d.text((x, y), line, font=font, fill=(255, 252, 245, 255))
         y += line_h
-    sig = "—— 团团 · 下班治愈"  # 固定栏目署名:让金句卡看起来是"一套里的一张"(收藏=集邮,关注=追更)
+    sig = "—— 团团 · 晚安治愈"  # 固定栏目署名:让金句卡看起来是"一套里的一张"(收藏=集邮,关注=追更)
     sx = (VIDEO_WIDTH - small_font.getlength(sig)) / 2
     d.text((sx, y + 34), sig, font=small_font, fill=(255, 246, 229, 235))
 
