@@ -205,11 +205,17 @@ def _build_healing_system_prompt(theme: dict) -> str:
 
     if HEALING_STYLE == "cozy":
         register_hook = textwrap.dedent("""\
-1. **FRAME-1 = 高浓度萌尖峰 + 温暖共鸣情境 (PROVEN: 8条爆款拆解都开在一张定住的萌脸,NOT 快切)**:
-   ~43% swipe in <2s. Stop the thumb with 团团 at its ABSOLUTE CUTEST — 尖叫级 adorable, not background-calm — inside a
-   warm relatable moment — PREFER "吃东西特写" (咬西瓜/啃玉米/捧奶茶小口嘬 — own data: eating scenes hit 9.1% completion vs 1-3% for idle staring), then 干件小事 (泡温泉/裹毯子/伸懒腰), AVOID pure idle 发呆/看雨 — framed TIGHT, 团团 large round fluffy.
-   Aim for viewers to feel "啊啊啊太可爱了" (extreme cuteness itself drives 转发/收藏). Cuteness + "这一刻好治愈" = they stay.
-   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans. Open ON the adorable moment.
+1. **FRAME-1 = 双通道反差钩子: 萌画面 + 第0秒老爷爷音开口 (differentiation MUST live in the first 2 seconds)**:
+   ~60-70% swipe in <2s, and a SILENT cute capybara looks like every other capybara in the feed — our ONLY
+   differentiation perceivable WITHIN 2 seconds is the VOICE: scene 1 opens with 团团 speaking ONE short line
+   (≤14字) at second 0 in the deep 老爷爷音 — an ancient grandpa voice coming out of a tiny fluffy capybara is an
+   INSTANT 反差 hook that needs no visual proof.
+   - Scene 1 `dialogue` MUST NOT be empty: speaker="团团", emotion="deadpan", 口语化 like a tired old man muttering
+     about his day, tied to the situation (e.g. "下了班,一步都不想多走喽。").
+   - VISUAL stays maximally cute: 团团 at its ABSOLUTE CUTEST in a warm relatable moment — PREFER "吃东西特写"
+     (咬西瓜/啃玉米/捧奶茶 — own data: eating hits 9.1% completion vs 1-3% idle staring), then 干件小事 (泡温泉/裹毯子/伸懒腰),
+     AVOID pure idle 发呆/看雨 — framed TIGHT, 团团 large round fluffy.
+   - ❌ FORBIDDEN as Scene 1: wide/empty establishing, slow scenery pans, SILENT opening.
    - Hold the frame with SUBTLE life (slow blink, soft breath, tiny stretch). NOT rapid cuts, NOT a hard push.""")
         register_engine = textwrap.dedent("""\
 3. **ONE 治愈金句 IS THE ENGINE (转发/收藏 driver on 中文平台) + BGM + 萌**: the whole skit builds to ONE warm,
@@ -219,9 +225,10 @@ def _build_healing_system_prompt(theme: dict) -> str:
    - ⛔ 正向红线(合规,必须守): NO 丧/摆烂/躺平/负能量/emo/放弃。心声可以"累",但落点一定是暖和被允许,绝不是"摆烂/别努力了"。
 4. **TONE — 温柔治愈,暖到想收藏、想转给某人。正能量、wholesome。NOT 皮/损/丧/阴阳怪气。**""")
         register_dialogue = textwrap.dedent("""\
-- `dialogue`: MOST scenes dialogue="" (cute visual + BGM carry). The WHOLE skit lands ONE warm 治愈金句 (≤20 chars,
-  speaker 团团 或 旁白) as the emotional button —— MUST 正向(被理解/允许休息/被鼓励), NEVER 丧/摆烂. 它会作为大字字幕显示,可截图。""")
-        register_arc = ("温暖萌情境 → 一句可截图的【正向】治愈金句 → 结尾金句大字定帧。极短10-13s。"
+- `dialogue`: EXACTLY TWO lines in the whole skit — ① scene 1 opener (≤14字, speaker=团团, emotion=deadpan,
+  第0秒老爷爷音反差钩子) ② final scene 治愈金句 (≤20字, 团团, warm) —— 金句 MUST 正向(被理解/允许休息/被鼓励),
+  NEVER 丧/摆烂, 会作为大字定帧可截图。ALL middle scenes dialogue="" (cute visual + BGM carry).""")
+        register_arc = ("老爷爷音开场一句(反差钩) → 萌+BGM → 正向金句大字定帧收尾。极短10-14s。"
                         "episode_summary(文案)结尾带暖CTA『发给最近很累的人』引导转发,但不硬导私域。")
     else:  # sassy (C) — 默认
         register_hook = textwrap.dedent("""\
@@ -608,13 +615,16 @@ def _build_user_prompt(
     if not _t.get("is_serial", True):
         from config.settings import HEALING_STYLE
         topics = "周一赖床 / 下雨天 / 嚷着要减肥 / 加班回家 / 抢零食 / 第一次见到雪 / 夏天太热 / 想点外卖"
-        # 上游择优器给出的今日选题+金句(有则强制采用;无则回退静态题库自由发挥)
+        # 上游择优器给出的今日选题+开场句+金句(有则强制采用;无则回退静态题库自由发挥)
         if picked:
             topic_line = f"- 【今日选题,必须严格采用】{picked['topic']}"
             quote_line = f"- 【结尾金句,必须一字不差地用作最后一镜的 dialogue】「{picked['quote']}」"
+            if picked.get("opener"):
+                quote_line += (f"\n            - 【开场第一句,必须一字不差用作第1镜 dialogue,"
+                               f"speaker=团团,emotion=deadpan(第0秒老爷爷音反差钩子)】「{picked['opener']}」")
         else:
             topic_line = f"- 自由选一个温暖共鸣情境（如：{topics}）"
-            quote_line = ""
+            quote_line = "- 第1镜必须有一句团团开场话(≤14字,老爷爷音口吻,皮/共鸣,第0秒开口)"
         if HEALING_STYLE == "cozy":
             style_lines = textwrap.dedent(f"""\
             {topic_line}
@@ -789,19 +799,33 @@ def generate_script(
             logger.warning(f"Validation error (attempt {attempt+1}): {e}")
             user_prompt += f"\n\nFIX THIS VALIDATION ERROR: {e}"
 
-    # 择优金句强制落位:最后一句非空台词必须=评审选出的金句(防LLM改写/漏用)
+    # 开场句强制落位:第1镜 dialogue=评审选出的开场句(第0秒老爷爷音反差钩子)
+    if picked and picked.get("opener") and script.scenes:
+        _sc0 = script.scenes[0]
+        if (_sc0.dialogue or "").strip() != picked["opener"]:
+            logger.info(f"[TopicPicker] 开场句落位: 「{(_sc0.dialogue or '').strip()[:16]}」→「{picked['opener']}」")
+            _sc0.dialogue = picked["opener"]
+        try:
+            _sc0.speaker = "团团"
+            _sc0.emotion = "deadpan"
+        except Exception:
+            pass
+
+    # 择优金句强制落位:金句放【末镜】(排除第1镜——那是开场句的位置,不能被倒灌覆盖)
     if picked and picked.get("quote"):
         _q = picked["quote"]
         _placed = False
         for _sc in reversed(script.scenes):
+            if _sc is script.scenes[0]:
+                break  # 只剩第1镜=没找到可放位置,走下面兜底
             if (_sc.dialogue or "").strip():
                 if _sc.dialogue.strip() != _q:
                     logger.info(f"[TopicPicker] 金句落位: 「{_sc.dialogue.strip()[:20]}」→「{_q}」")
                     _sc.dialogue = _q
                 _placed = True
                 break
-        if not _placed and script.scenes:
-            script.scenes[-1].dialogue = _q
+        if not _placed and len(script.scenes) > 1:
+            script.scenes[-1].dialogue = _q  # 末镜留空时直接写入末镜
 
     logger.success(
         "Script generated: '{}' with {} scenes.",

@@ -50,16 +50,26 @@ _GEN_PROMPT = """你是一个百万粉治愈账号的内容策划。为「团团
    - ⛔禁止: 丧/摆烂/躺平/emo/负能量/说教/俗套鸡汤(如"加油""明天会更好"直接淘汰)
    - 好的样子: "今天也辛苦了,回家可以什么都不做。" / "慢一点没关系,又不是只有你在赶路。"
    - 10句要风格各异(有的戳心、有的软萌、有的带一点点俏皮),别同一个句式复制10遍
+3. "openers": 5句候选【开场第一句】,每句≤14字——视频第0秒由团团(深沉老爷爷音)开口说的第一句话,
+   反差(苍老大爷嗓×软萌小水豚)本身就是钩子。要求: 和选题情境强相关、口语化像随口一句、
+   皮/亲切/带点共鸣,禁丧禁说教。例:"下了班,一步都不想多走喽。" / "这口瓜,比上班甜多啦。"
 只输出 JSON,不要任何其他文字。"""
 
-_JUDGE_PROMPT = """你是一个爆款文案评审。下面是同一情境的10句候选治愈金句,给每句按四项打分(各1-10):
+_JUDGE_PROMPT = """你是一个爆款文案评审。
+
+【任务1】下面是同一情境的10句候选治愈金句,按四项打分(各1-10)选最佳:
 A共鸣扎心度(是否精准说中打工人心声) B可截图性(单独截出来发朋友圈成立吗) C正向合规(有一丝丧/摆烂即0分) D不俗套(鸡汤套话即低分)
 
-情境: {topic}
-候选:
-{candidates}
+【任务2】下面是5句候选开场句(视频第0秒由深沉老爷爷音从一只软萌小水豚嘴里说出),选最佳:
+标准=老爷爷音念出来反差感/像真人随口说的口语自然度/让人想再听两秒
 
-输出 JSON: {{"best": "<原文一字不差的最佳句>", "reason": "<一句话理由>"}}
+情境: {topic}
+金句候选:
+{candidates}
+开场句候选:
+{openers}
+
+输出 JSON: {{"best": "<金句原文一字不差>", "best_opener": "<开场句原文一字不差>", "reason": "<一句话理由>"}}
 只输出 JSON。"""
 
 
@@ -114,21 +124,28 @@ def pick_topic_and_quote(theme_key: str = "capybara_healing") -> Optional[dict]:
         data = _parse_json(_chat([{"role": "user", "content": gen_prompt}], temperature=0.9))
         topic = str(data.get("topic", "")).strip()
         candidates = [str(c).strip() for c in data.get("candidates", []) if str(c).strip()]
+        openers = [str(c).strip() for c in data.get("openers", []) if str(c).strip()]
         if not topic or len(candidates) < 3:
             logger.warning("[TopicPicker] 候选不足,回退旧行为")
             return None
 
         judge = _parse_json(_chat([{"role": "user", "content": _JUDGE_PROMPT.format(
-            topic=topic, candidates="\n".join(f"{i+1}. {c}" for i, c in enumerate(candidates)),
+            topic=topic,
+            candidates="\n".join(f"{i+1}. {c}" for i, c in enumerate(candidates)),
+            openers="\n".join(f"{i+1}. {c}" for i, c in enumerate(openers)) or "(无)",
         )}], temperature=0.2))
         best = str(judge.get("best", "")).strip().strip('"“”「」')
         # 评审输出必须命中候选之一(防它自己现编);没命中就取第一句
         quote = best if best in candidates else candidates[0]
         if len(quote) > 24:
             quote = quote[:24]
+        best_op = str(judge.get("best_opener", "")).strip().strip('"“”「」')
+        opener = best_op if best_op in openers else (openers[0] if openers else "")
+        if len(opener) > 16:
+            opener = opener[:16]
 
-        logger.success(f"[TopicPicker] 选题:「{topic}」 金句:「{quote}」 ({judge.get('reason','')[:40]})")
-        return {"topic": topic, "quote": quote}
+        logger.success(f"[TopicPicker] 选题:「{topic}」 开场:「{opener}」 金句:「{quote}」 ({judge.get('reason','')[:40]})")
+        return {"topic": topic, "quote": quote, "opener": opener}
     except Exception as e:
         logger.warning(f"[TopicPicker] 择优失败(回退旧行为): {e}")
         return None
